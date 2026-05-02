@@ -3,6 +3,5 @@ data/
 *.log
 .env
 .DS_Store
-package-lock.json
 .tmp-test-*
 .data-seed-test*
