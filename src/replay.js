@@ -10,6 +10,21 @@ const db = require('./db');
 const { substitute, RESOLVERS } = require('./resolvers');
 const projectsLib = require('./projects');
 const { goto, click, fill, selectOption, press, waitFor, waitMs, screenshotAction, evalJs, toggle, handleDialog, verifyExpect, extract, assertEq } = require('./actions');
+
+/**
+ * Tiny JSONPath evaluator — só suporta `$.a.b[0].c` e `$.a.b.c`. Retorna undefined em miss.
+ */
+function jsonPath(obj, path) {
+  if (!path.startsWith('$')) return undefined;
+  const tokens = path.slice(1).match(/(?:\.[A-Za-z_][\w]*)|(?:\[\d+\])/g) || [];
+  let cur = obj;
+  for (const t of tokens) {
+    if (cur == null) return undefined;
+    if (t.startsWith('.')) cur = cur[t.slice(1)];
+    else if (t.startsWith('[')) cur = cur[Number(t.slice(1, -1))];
+  }
+  return cur;
+}
 const { httpRequest, httpAssertStatus } = require('./actions/http');
 const { jwtSign } = require('./actions/jwt');
 const { auditAssertEntry } = require('./actions/audit');
@@ -205,6 +220,23 @@ async function runFlow(flowId, env) {
         for (const [k, v] of Object.entries(result.extracted)) {
           vars[k] = v;
           emit('var_resolved', { name: k, source: step.action, value: redact(k, v) });
+        }
+      }
+
+      // step.extract { VAR_NAME: "$.json.path" } — para http.* actions com body JSON
+      if (step.extract && typeof step.extract === 'object' && result?.body) {
+        let parsed = null;
+        try { parsed = JSON.parse(result.body); } catch { /* not JSON, skip */ }
+        if (parsed != null) {
+          for (const [varName, path] of Object.entries(step.extract)) {
+            const value = jsonPath(parsed, String(path));
+            if (value !== undefined) {
+              vars[varName] = value;
+              emit('var_resolved', { name: varName, source: `${step.action}.extract`, value: redact(varName, value) });
+            } else {
+              emit('var_extract_miss', { name: varName, path, action: step.action });
+            }
+          }
         }
       }
 
