@@ -1,0 +1,93 @@
+name: Deploy flows-hub
+on:
+  push:
+    branches: [main, feature/hub-fork-v0.1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps + run tests
+        run: |
+          npm ci
+          node --test test/*.test.js
+
+      - name: Pack tarball (preserva subdirs)
+        run: tar -czf flows-hub.tar.gz src public flows scripts package.json package-lock.json
+
+      - name: Upload tarball to /tmp
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          source: flows-hub.tar.gz
+          target: /tmp
+          overwrite: true
+          timeout: 180s
+
+      - name: Extract + install + restart PM2
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          command_timeout: 8m
+          script: |
+            set -e
+            mkdir -p /opt/flows-hub
+            tar -xzf /tmp/flows-hub.tar.gz -C /opt/flows-hub --overwrite
+            rm -f /tmp/flows-hub.tar.gz
+            cd /opt/flows-hub
+            cat > .env <<EOF
+            PORT=4000
+            DATA_DIR=/var/lib/flows-hub
+            PUBLIC_BASE_URL=https://testes.somosahub.us
+            APP_VERSION=${{ github.sha }}
+            SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+            SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+            SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+            SUPABASE_JWT_SECRET=${{ secrets.SUPABASE_JWT_SECRET }}
+            SUPABASE_DB_URL=${{ secrets.SUPABASE_DB_URL }}
+            RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
+            MAILTM_BASE_URL=${{ secrets.MAILTM_BASE_URL }}
+            EOF
+            chmod 600 .env
+
+            npm ci --omit=dev
+            npx playwright install chromium --with-deps || true
+
+            if pm2 describe flows-hub > /dev/null 2>&1; then
+              pm2 reload flows-hub --update-env
+            else
+              pm2 start src/server.js --name flows-hub --update-env
+            fi
+            pm2 save
+            sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u root --hp /root || true
+
+            # Smoke test
+            sleep 4
+            for i in 1 2 3 4 5; do
+              if curl -sf -o /dev/null -m 5 http://127.0.0.1:4000/health; then
+                echo "✅ flows-hub health OK on :4000"
+                break
+              fi
+              echo "⏳ tentativa $i/5 falhou; aguardando 3s..."
+              sleep 3
+              if [ "$i" = "5" ]; then
+                echo "❌ flows-hub não respondeu /health"
+                pm2 logs flows-hub --lines 80 --nostream
+                exit 1
+              fi
+            done
+            echo "Deploy ok. https://testes.somosahub.us"
