@@ -114,6 +114,17 @@ const RESOLVERS = {
    * Reads ADMIN_USER_ID and SUPABASE_JWT_SECRET from project vars (second arg)
    * or from process.env as fallback.
    */
+
+  // Generates a unique-per-run timestamp/random string. Useful for codes/names
+  // that must be unique across runs (e.g. turma codigo "FH-E2E-${TS}").
+  'now': () => String(Date.now()),
+  'random': ({ length = 8 } = {}) => {
+    const c = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let s = '';
+    for (let i = 0; i < length; i++) s += c[Math.floor(Math.random() * c.length)];
+    return s;
+  },
+
   'jwt.sign_admin': async (args = {}, projectVars) => {
     const { user_id, expires_in = 3600 } = args;
     const sub = user_id || projectVars?.ADMIN_USER_ID;
