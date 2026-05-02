@@ -17,6 +17,7 @@
     "express": "^4.21.1",
     "jose": "^5.10.0",
     "mailtm-cli": "^0.1.0",
+    "pg": "^8.20.0",
     "playwright-core": "^1.50.0"
   },
   "engines": {

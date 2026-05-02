@@ -14,6 +14,8 @@ const { httpRequest, httpAssertStatus } = require('./actions/http');
 const { jwtSign } = require('./actions/jwt');
 const { auditAssertEntry } = require('./actions/audit');
 const { createClient } = require('@supabase/supabase-js');
+const { Pool } = require('pg');
+const { dbRead } = require('./actions/db');
 const { recordHttpCall, recordAuditEntry } = require('./db');
 const linter = require('./linter');
 
@@ -30,6 +32,7 @@ const HANDLERS = {
   'http.assert_status': httpAssertStatus,
   'jwt.sign': jwtSign,
   'audit.assert_entry': auditAssertEntry,
+  'db.read': dbRead,
 };
 
 /**
@@ -41,6 +44,16 @@ function makeSupabaseClient(vars) {
   const key = vars?.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false } });
+}
+
+function makePgPool(vars) {
+  const url = vars?.SUPABASE_DB_URL || process.env.SUPABASE_DB_URL;
+  if (!url) return null;
+  return new Pool({
+    connectionString: url,
+    max: 1,
+    idleTimeoutMillis: 5000,
+  });
 }
 
 function loadFlow(flowId) {
@@ -161,8 +174,8 @@ async function runFlow(flowId, env) {
 
       let result;
       try {
-        // http.*, jwt.*, and audit.* actions receive a shared ctx object (persisted per run for lastHttpResult)
-        if (step.action.startsWith('http.') || step.action.startsWith('jwt.') || step.action.startsWith('audit.')) {
+        // http.*, jwt.*, audit.*, and db.* actions receive a shared ctx object (persisted per run for lastHttpResult)
+        if (step.action.startsWith('http.') || step.action.startsWith('jwt.') || step.action.startsWith('audit.') || step.action === 'db.read') {
           httpCtx.stepN = step.n;
           // jwt.* needs vars (for store_as write-back and SUPABASE_JWT_SECRET lookup)
           httpCtx.vars = vars;
@@ -304,6 +317,7 @@ async function executeReplay(flowId, overrides = {}, onEvent = null, meta = {}) 
     recordCall: recordHttpCall,
     recordAuditEntry,
     supabase: makeSupabaseClient(vars),
+    pg: makePgPool(vars),
   };
   try {
     await runFlow(flowId, { vars, ctx, session, emit, stepLog, allAssertions, prefix: '', depth: 0, runId, httpCtx });
@@ -311,6 +325,7 @@ async function executeReplay(flowId, overrides = {}, onEvent = null, meta = {}) 
     status = 'failed';
     error = e.message;
   } finally {
+    try { await httpCtx.pg?.end?.(); } catch {}
     try {
       // Apply project suppression rules to findings before persisting. Auto-triage
       // rows go into finding_triage; matched findings show up dimmed in the viewer.
@@ -451,6 +466,7 @@ async function runFlowOnSession({ flowId, overrides = {}, session, ctx = null, o
     recordCall: recordHttpCall,
     recordAuditEntry,
     supabase: makeSupabaseClient(seeded),
+    pg: makePgPool(seeded),
   };
   const env = {
     vars: seeded,
@@ -469,6 +485,8 @@ async function runFlowOnSession({ flowId, overrides = {}, session, ctx = null, o
     return { ok: true, vars: env.vars, steps: env.stepLog, assertions: env.allAssertions };
   } catch (e) {
     return { ok: false, error: e.message, vars: env.vars, steps: env.stepLog, assertions: env.allAssertions };
+  } finally {
+    try { await httpCtxForRun.pg?.end?.(); } catch {}
   }
 }
 
