@@ -1,0 +1,91 @@
+id: admin-crud-turma-plano-lote
+description: Admin cria turma → categoria → plano → lote — valida cada via audit
+vars:
+  - name: API_BASE
+    resolver: env
+    args: { name: API_BASE }
+  - name: ADMIN_JWT
+    resolver: jwt.sign_admin
+    args: {}
+  - name: TS
+    resolver: eval
+    args: { js: "return Date.now();" }
+steps:
+  - n: 1
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/admin/turmas"
+      headers: { Authorization: "Bearer ${ADMIN_JWT}" }
+      body:
+        codigo: "FH-E2E-${TS}"
+        nome: "Turma flows-hub e2e"
+        sede: "Belo Horizonte"
+    expect: { status: 201 }
+    extract: { TURMA_ID: "$.turma.id" }
+
+  - n: 2
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/admin/categorias"
+      headers: { Authorization: "Bearer ${ADMIN_JWT}" }
+      body:
+        nome: "Cat e2e ${TS}"
+        is_principal: true
+        status_ativo: "ativo"
+        turma_id: "${TURMA_ID}"
+    expect: { status: 201 }
+    extract: { CAT_ID: "$.categoria.id" }
+
+  - n: 3
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/admin/planos"
+      headers: { Authorization: "Bearer ${ADMIN_JWT}" }
+      body:
+        nome_plano: "Plano e2e ${TS}"
+        turma_id: "${TURMA_ID}"
+        categoria_id: "${CAT_ID}"
+        valor: 1000
+    expect: { status: 201 }
+    extract: { PLANO_ID: "$.plano.id" }
+
+  - n: 4
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/admin/lotes"
+      headers: { Authorization: "Bearer ${ADMIN_JWT}" }
+      body:
+        nome_lote: "Lote e2e ${TS}"
+        plano_id: "${PLANO_ID}"
+        valor: 500
+        inicio_vendas: "2027-01-01"
+        hora_inicio_vendas: "09:00"
+    expect: { status: 201 }
+    extract: { LOTE_ID: "$.lote.id" }
+
+  - n: 5
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 1
+      action: "post.api.admin.turmas"
+      http_status: 201
+
+  - n: 6
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 4
+      action: "post.api.admin.lotes"
+      http_status: 201
+
+  # Cleanup
+  - n: 7
+    action: http.request
+    args:
+      method: DELETE
+      url: "${API_BASE}/api/admin/lotes/${LOTE_ID}"
+      headers: { Authorization: "Bearer ${ADMIN_JWT}" }
+    expect: { status: 200 }

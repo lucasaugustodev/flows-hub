@@ -1,0 +1,48 @@
+id: rescisao-aprovar
+description: User solicita rescisão → admin aprova
+vars:
+  - name: API_BASE
+    resolver: env
+    args: { name: API_BASE }
+  - name: ADMIN_JWT
+    resolver: jwt.sign_admin
+    args: {}
+steps:
+  - n: 1
+    action: invoke_flow
+    args: { flow: adesao-completa }
+
+  - n: 2
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/rescisao/solicitar"
+      headers: { Authorization: "Bearer ${USER_JWT}" }
+      body:
+        contratoId: "${CONTRATO_ID}"
+        motivo: "teste e2e flows-hub"
+    expect: { status: 201 }
+    extract: { RES_ID: "$.id" }
+
+  - n: 3
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/rescisao/${RES_ID}/aprovar"
+      headers: { Authorization: "Bearer ${ADMIN_JWT}" }
+      body: {}
+    expect: { status: 201 }
+
+  - n: 4
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 3
+      action: "post.api.rescisao.:id.aprovar"
+      http_status: 201
+
+  - n: 5
+    action: db.read
+    args:
+      query: "select status from contratos where id = $1"
+      params: ["${CONTRATO_ID}"]
+    expect: { "rows[0].status": "rescindido" }

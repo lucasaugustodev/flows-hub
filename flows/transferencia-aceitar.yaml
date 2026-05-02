@@ -1,0 +1,57 @@
+id: transferencia-aceitar
+description: User A solicita transferência → User B aceita (multi-user via JWT sign)
+vars:
+  - name: API_BASE
+    resolver: env
+    args: { name: API_BASE }
+  - name: USER_A_JWT
+    resolver: jwt.sign_admin
+    args:
+      user_id: "${TEST_USER_A_ID}"
+  - name: USER_B_JWT
+    resolver: jwt.sign_admin
+    args:
+      user_id: "${TEST_USER_B_ID}"
+  - name: USER_B_EMAIL
+    resolver: env
+    args: { name: TEST_USER_B_EMAIL }
+steps:
+  - n: 1
+    action: invoke_flow
+    args: { flow: adesao-completa }
+
+  - n: 2
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/transferencia/solicitar"
+      headers: { Authorization: "Bearer ${USER_A_JWT}" }
+      body:
+        contratoId: "${CONTRATO_ID}"
+        toUserEmail: "${USER_B_EMAIL}"
+    expect: { status: 201 }
+    extract: { TRANSF_ID: "$.id" }
+
+  - n: 3
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 2
+      action: "post.api.transferencia.solicitar"
+      http_status: 201
+
+  - n: 4
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/transferencia/${TRANSF_ID}/aceitar"
+      headers: { Authorization: "Bearer ${USER_B_JWT}" }
+      body: {}
+    expect: { status: 201 }
+
+  - n: 5
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 4
+      action: "post.api.transferencia.:id.aceitar"
+      http_status: 201
+      status: success

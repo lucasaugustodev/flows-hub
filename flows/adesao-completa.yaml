@@ -1,0 +1,72 @@
+id: adesao-completa
+description: Funil de adesão completo via UI (lojinha → plano → parcelamento → contratacao)
+vars:
+  - name: API_BASE
+    resolver: env
+    args: { name: API_BASE }
+  - name: PORTAL
+    resolver: env
+    args: { name: PORTAL_BASE }
+  - name: TURMA_CODE
+    resolver: static
+    args: { value: "TEST-CLAUDE-ADM-001" }
+steps:
+  - n: 1
+    action: invoke_flow
+    args: { flow: signup-and-login }
+
+  - n: 2
+    action: goto
+    args: { url: "${PORTAL}/selecao-turma" }
+
+  - n: 3
+    action: fill
+    args:
+      target: 'input[name=codigo]'
+      value: "${TURMA_CODE}"
+
+  - n: 4
+    action: click
+    args: { text: "Confirmar turma" }
+    expect: { url_contains: "/selecao-plano" }
+
+  - n: 5
+    action: click
+    args:
+      target: 'button[data-testid=plano-card]:first-child'
+      text: "Selecionar plano"
+    expect: { url_contains: "/selecao-parcelamento" }
+
+  - n: 6
+    action: select
+    args:
+      target: 'select[name=parcelas]'
+      value: "12"
+
+  - n: 7
+    action: click
+    args: { text: "Confirmar parcelamento" }
+    expect: { url_contains: "/contratacao" }
+
+  # Extrai contratoId do localStorage (set pela própria contratacao)
+  - n: 8
+    action: extract
+    args:
+      var: CONTRATO_ID
+      js: "return localStorage.getItem('contratoId')"
+
+  # Audit assertion via backend (via trace_id propagado)
+  - n: 9
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/adesao/${CONTRATO_ID}"
+      headers: { Authorization: "Bearer ${USER_JWT}" }
+    expect: { status: 200 }
+
+  - n: 10
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 9
+      action: "get.api.adesao.:id"
+      http_status: 200
