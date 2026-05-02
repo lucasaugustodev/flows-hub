@@ -10,6 +10,8 @@ const db = require('./db');
 const { substitute, RESOLVERS } = require('./resolvers');
 const projectsLib = require('./projects');
 const { goto, click, fill, selectOption, press, waitFor, waitMs, screenshotAction, evalJs, toggle, handleDialog, verifyExpect, extract, assertEq } = require('./actions');
+const { httpRequest } = require('./actions/http');
+const { recordHttpCall } = require('./db');
 const linter = require('./linter');
 
 const BROWSERLESS_WS = process.env.BROWSERLESS_WS || 'ws://localhost:3000';
@@ -21,6 +23,7 @@ const HANDLERS = {
   wait_for: waitFor, wait_ms: waitMs, screenshot: screenshotAction,
   eval: evalJs, toggle, dialog: handleDialog,
   extract, assert_eq: assertEq,
+  'http.request': httpRequest,
 };
 
 function loadFlow(flowId) {
@@ -141,7 +144,18 @@ async function runFlow(flowId, env) {
 
       let result;
       try {
-        result = await handler(session, args);
+        // http.* actions receive a ctx object instead of a browser session
+        if (step.action.startsWith('http.')) {
+          const httpCtx = {
+            runId,
+            stepN: step.n,
+            traceId: `${runId}:${step.n}`,
+            recordCall: recordHttpCall,
+          };
+          result = await handler(httpCtx, args);
+        } else {
+          result = await handler(session, args);
+        }
       } catch (handlerErr) {
         // Auto-heal: if step has step.heal=true OR action is in list of healable, try LLM fallback
         const healable = step.heal === true || ['click', 'fill', 'toggle'].includes(step.action);

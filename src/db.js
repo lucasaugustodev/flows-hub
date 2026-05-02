@@ -223,6 +223,27 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS http_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    step_n INTEGER NOT NULL,
+    trace_id TEXT NOT NULL,
+    method TEXT NOT NULL,
+    url TEXT NOT NULL,
+    request_headers TEXT,
+    request_body TEXT,
+    response_status INTEGER,
+    response_headers TEXT,
+    response_body TEXT,
+    latency_ms INTEGER,
+    error TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_http_calls_run ON http_calls (run_id);
+  CREATE INDEX IF NOT EXISTS idx_http_calls_trace ON http_calls (trace_id);
+`);
+
 // Add project_id to existing tables (idempotent: ignore "duplicate column" errors)
 for (const sql of [
   `ALTER TABLE flows ADD COLUMN project_id TEXT`,
@@ -248,4 +269,18 @@ for (const sql of [
   try { db.exec(sql); } catch { /* already exists */ }
 }
 
+function recordHttpCall(callRecord) {
+  return db.prepare(`INSERT INTO http_calls
+    (run_id, step_n, trace_id, method, url, request_headers, request_body,
+     response_status, response_headers, response_body, latency_ms, error)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    callRecord.run_id, callRecord.step_n, callRecord.trace_id, callRecord.method,
+    callRecord.url, callRecord.request_headers, callRecord.request_body,
+    callRecord.response_status, callRecord.response_headers, callRecord.response_body,
+    callRecord.latency_ms, callRecord.error,
+  );
+}
+
 module.exports = db;
+module.exports.recordHttpCall = recordHttpCall;
