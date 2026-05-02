@@ -1162,14 +1162,52 @@ app.delete('/api/runs/:id/findings/:sig/notes/:noteId', requireRole('editor'), (
   res.json({ ok: true });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[pageflows] :${PORT}`);
-  console.log(`  PUBLIC_BASE_URL=${PUBLIC_BASE_URL}`);
-  console.log(`  BROWSERLESS_WS=${process.env.BROWSERLESS_WS}`);
-  console.log(`  DATA_DIR=${DATA_DIR}`);
+// ===== new run-detail sub-endpoints =====
 
-  // Cron scheduler — opt-out via DISABLE_SCHEDULER for local debugging
-  if (process.env.DISABLE_SCHEDULER !== '1') {
-    scheduler.start({ db, executeReplay });
-  }
+app.get('/api/runs/:id/http-calls', (req, res) => {
+  const run = db.prepare('SELECT id FROM runs WHERE id = ? AND project_id = ?').get(req.params.id, req.project.id);
+  if (!run) return res.status(404).json({ error: 'run not found' });
+  const calls = db.prepare(`
+    SELECT id, run_id, step_n, trace_id, method, url,
+           response_status, latency_ms,
+           request_headers, request_body,
+           response_headers, response_body, error,
+           created_at
+    FROM http_calls
+    WHERE run_id = ?
+    ORDER BY id ASC
+  `).all(req.params.id);
+  res.json({ calls });
 });
+
+app.get('/api/runs/:id/audit-entries', (req, res) => {
+  const run = db.prepare('SELECT id FROM runs WHERE id = ? AND project_id = ?').get(req.params.id, req.project.id);
+  if (!run) return res.status(404).json({ error: 'run not found' });
+  const entries = db.prepare(`
+    SELECT id, run_id, step_n, trace_id, audit_log_id,
+           action, http_status, status, latency_ms,
+           user_id, raw_json, fetched_at
+    FROM audit_entries
+    WHERE run_id = ?
+    ORDER BY id ASC
+  `).all(req.params.id);
+  res.json({ entries });
+});
+
+// ===== export for testing =====
+function makeApp() { return app; }
+module.exports = { makeApp, app };
+
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[pageflows] :${PORT}`);
+    console.log(`  PUBLIC_BASE_URL=${PUBLIC_BASE_URL}`);
+    console.log(`  BROWSERLESS_WS=${process.env.BROWSERLESS_WS}`);
+    console.log(`  DATA_DIR=${DATA_DIR}`);
+
+    // Cron scheduler — opt-out via DISABLE_SCHEDULER for local debugging
+    if (process.env.DISABLE_SCHEDULER !== '1') {
+      scheduler.start({ db, executeReplay });
+    }
+  });
+}
