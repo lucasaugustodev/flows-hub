@@ -134,6 +134,43 @@ const RESOLVERS = {
       .setExpirationTime(now + expires_in)
       .sign(new TextEncoder().encode(secret));
   },
+
+  /**
+   * Exchanges email+password for a Supabase access_token via the real Supabase Auth API.
+   * Useful for flows that need to test as a real user without going through UI signup.
+   *
+   *   { name: "USER_JWT", resolver: "supabase.login",
+   *     args: { email: "user@x.com", password: "secret" } }
+   *
+   * Reads SUPABASE_URL + SUPABASE_ANON_KEY from project vars (second arg)
+   * or from process.env as fallback.
+   */
+  'supabase.login': async (args = {}, projectVars) => {
+    const { email, password } = args;
+    if (!email || !password) {
+      throw new Error('supabase.login: requires email + password');
+    }
+    const url = projectVars?.SUPABASE_URL || process.env.SUPABASE_URL;
+    const anon = projectVars?.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    if (!url || !anon) {
+      throw new Error('supabase.login: missing SUPABASE_URL or SUPABASE_ANON_KEY (project var ou env)');
+    }
+
+    const resp = await fetch(`${url}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: anon },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error(`supabase.login failed (${resp.status}): ${t.slice(0, 200)}`);
+    }
+    const json = await resp.json();
+    if (!json.access_token) {
+      throw new Error('supabase.login: no access_token in response');
+    }
+    return json.access_token;
+  },
 };
 
 /**
