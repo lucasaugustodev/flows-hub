@@ -1,4 +1,31 @@
-# pageflows
+# flows-hub
+
+> Fork de [pageflows](https://github.com/lucasaugustodev/pageflows) customizado para testes E2E do **Portal Hub v2**.
+> Adiciona actions HTTP/JWT/DB/audit, trace correlation e 6 flows pre-built do hub.
+>
+> **Deploy:** https://testes.somosahub.us
+
+## Hub-specific changes (vs upstream pageflows)
+
+| Aspecto | Upstream | flows-hub |
+|---|---|---|
+| Actions | só browser | + `http.request`, `http.assert_status`, `jwt.sign`, `audit.assert_entry`, `db.read` |
+| Resolvers | mailtm, fake.cpf, static, eval | + `jwt.sign_admin`, `supabase.login` |
+| Trace | screenshot, DOM | + correlation via `X-Trace-Id` linkado ao `audit_log` do hub |
+| Cenários | user-built | + 6 flows pre-built em `flows/` (signup, adesão, MP, transferência, rescisão, admin CRUD) |
+| Dashboard | upstream | + tabs **API Calls** e **Audit Log** no run detail |
+
+Rebases do upstream: trimestralmente.
+
+```bash
+git fetch upstream
+git rebase upstream/main
+# resolver conflitos em src/actions.js, src/replay.js, src/resolvers.js
+```
+
+---
+
+## Upstream pageflows
 
 > Cloud browser automation. Record once, replay forever — with dynamic vars (OTP/CPF/fake data), an LLM agent that orchestrates your saved flows, and a web UI to run/share/inspect everything.
 
