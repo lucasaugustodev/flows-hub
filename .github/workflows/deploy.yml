@@ -23,7 +23,7 @@ jobs:
           node --test test/*.test.js
 
       - name: Pack tarball (preserva subdirs)
-        run: tar -czf flows-hub.tar.gz src public flows scripts package.json package-lock.json
+        run: tar -czf flows-hub.tar.gz src public flows scripts package.json package-lock.json ecosystem.config.js
 
       - name: Upload tarball to /tmp
         uses: appleboy/scp-action@v0.1.7
@@ -68,10 +68,9 @@ jobs:
             npx playwright install chromium --with-deps || true
 
             if pm2 describe flows-hub > /dev/null 2>&1; then
-              pm2 reload flows-hub --update-env
-            else
-              pm2 start src/server.js --name flows-hub --update-env
+              pm2 delete flows-hub
             fi
+            pm2 start ecosystem.config.js --update-env
             pm2 save
             sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u root --hp /root || true
 
