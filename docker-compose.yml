@@ -1,0 +1,37 @@
+services:
+  browserless:
+    image: ghcr.io/browserless/chromium:latest
+    container_name: pageflows-browserless
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      TOKEN: ${BROWSERLESS_TOKEN:-pageflows-dev}
+      MAX_CONCURRENT_SESSIONS: 5
+      MAX_QUEUE_LENGTH: 10
+      CONNECTION_TIMEOUT: 600000
+      DEBUG: "browserless*"
+    shm_size: 2gb
+
+  api:
+    build: .
+    container_name: pageflows-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4100:4100"
+    environment:
+      PORT: 4100
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:4100}
+      API_KEYS: ${API_KEYS}
+      BROWSERLESS_WS: "ws://browserless:3000/chromium/playwright?token=${BROWSERLESS_TOKEN:-pageflows-dev}"
+      DB_FILE: /data/pageflows.db
+      DATA_DIR: /data
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-pageflows <noreply@somosahub.com.br>}
+      SIGNUP_ALLOWED_DOMAIN: ${SIGNUP_ALLOWED_DOMAIN:-somosahub.com.br}
+      AUTO_SHARE_PROJECTS: ${AUTO_SHARE_PROJECTS:-true}
+    volumes:
+      - ./data:/data
+    depends_on:
+      - browserless

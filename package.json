@@ -1,0 +1,28 @@
+{
+  "name": "pageflows",
+  "version": "0.1.0",
+  "description": "Self-hosted browser automation. Record once, replay N times with dynamic vars (OTP, CPF, etc).",
+  "license": "MIT",
+  "main": "src/server.js",
+  "bin": {
+    "pageflows": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "express": "^4.21.1",
+    "mailtm-cli": "^0.1.0",
+    "playwright-core": "^1.50.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "lucasaugustodev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucasaugustodev/pageflows.git"
+  }
+}
