@@ -53,7 +53,7 @@ function evalWhen(expr, vars) {
 async function runFlow(flowId, env) {
   if (env.depth > MAX_INVOKE_DEPTH) throw new Error(`invoke_flow depth exceeded (${MAX_INVOKE_DEPTH})`);
   const flow = loadFlow(flowId);
-  const { vars, ctx, session, emit, stepLog, prefix } = env;
+  const { vars, ctx, session, emit, stepLog, prefix, runId } = env;
 
   const stepLabel = (n) => prefix ? `${prefix}${n}` : String(n);
 
@@ -149,7 +149,6 @@ async function runFlow(flowId, env) {
           const httpCtx = {
             runId,
             stepN: step.n,
-            traceId: `${runId}:${step.n}`,
             recordCall: recordHttpCall,
           };
           result = await handler(httpCtx, args);
@@ -284,7 +283,7 @@ async function executeReplay(flowId, overrides = {}, onEvent = null, meta = {}) 
 
   const allAssertions = [];
   try {
-    await runFlow(flowId, { vars, ctx, session, emit, stepLog, allAssertions, prefix: '', depth: 0 });
+    await runFlow(flowId, { vars, ctx, session, emit, stepLog, allAssertions, prefix: '', depth: 0, runId });
   } catch (e) {
     status = 'failed';
     error = e.message;
@@ -415,12 +414,13 @@ Do NOT include any text outside the JSON.`;
  * or another long-lived session). Useful for the orchestrator agent which composes
  * known flows + ad-hoc steps in the same browser context.
  */
-async function runFlowOnSession({ flowId, overrides = {}, session, ctx = null, onEvent = null, projectId = null }) {
+async function runFlowOnSession({ flowId, overrides = {}, session, ctx = null, onEvent = null, projectId = null, runId = null }) {
   const emit = (type, data = {}) => { if (onEvent) try { onEvent({ type, t: Date.now(), ...data }); } catch {} };
   // Seed vars: project-vars first, then user overrides take precedence.
   const seeded = {};
   if (projectId) { try { Object.assign(seeded, projectsLib.getVarsAsObject(projectId)); } catch {} }
   Object.assign(seeded, overrides);
+  const resolvedRunId = runId || crypto.randomBytes(8).toString('hex');
   const env = {
     vars: seeded,
     ctx: ctx || { cleanup: [], mailtmInstances: {} },
@@ -430,6 +430,7 @@ async function runFlowOnSession({ flowId, overrides = {}, session, ctx = null, o
     allAssertions: [],
     prefix: '',
     depth: 0,
+    runId: resolvedRunId,
   };
   try {
     await runFlow(flowId, env);
