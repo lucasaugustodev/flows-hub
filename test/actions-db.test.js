@@ -87,3 +87,51 @@ test('db.read fail com query non-string', async () => {
     /requires query/,
   );
 });
+
+test('db.read rejeita statement stacking (SELECT 1; DROP TABLE)', async () => {
+  const ctx = { pg: { query: async () => ({ rows: [] }) } };
+  await assert.rejects(
+    dbRead(ctx, { query: 'SELECT 1; DROP TABLE contratos' }),
+    /statement stacking/,
+  );
+});
+
+test('db.read aceita trailing semicolon', async () => {
+  const ctx = { pg: { query: async (sql) => { assert.match(sql, /;\s*$/); return { rows: [{ n: 1 }] }; } } };
+  const r = await dbRead(ctx, { query: 'SELECT 1;' });
+  assert.strictEqual(r.ok, true);
+});
+
+test('db.read rejeita statement stacking com whitespace', async () => {
+  const ctx = { pg: { query: async () => ({ rows: [] }) } };
+  await assert.rejects(
+    dbRead(ctx, { query: 'SELECT 1 ;\n   DROP TABLE x' }),
+    /statement stacking/,
+  );
+});
+
+test('db.read rejeita DML em CTE', async () => {
+  const ctx = { pg: { query: async () => ({ rows: [] }) } };
+  await assert.rejects(
+    dbRead(ctx, { query: 'WITH bad AS (DELETE FROM contratos RETURNING id) SELECT * FROM bad' }),
+    /DML keywords/,
+  );
+});
+
+test('db.read rejeita DML keyword fora de string mesmo legitima', async () => {
+  // Aggressive guard — também rejeita queries onde a palavra aparece como literal.
+  // Documentado como limitação; user deve usar params em vez de literais.
+  const ctx = { pg: { query: async () => ({ rows: [] }) } };
+  await assert.rejects(
+    dbRead(ctx, { query: "select * from contratos where motivo = 'cliente quer DELETE da conta'" }),
+    /DML keywords/,
+  );
+});
+
+test('db.read rejeita params non-array', async () => {
+  const ctx = { pg: { query: async () => ({ rows: [] }) } };
+  await assert.rejects(
+    dbRead(ctx, { query: 'select 1', params: { foo: 'bar' } }),
+    /params must be an array/,
+  );
+});
