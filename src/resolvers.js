@@ -3,6 +3,7 @@
  */
 const { execSync } = require('child_process');
 const { MailTM } = require('mailtm-cli');
+const { SignJWT } = require('jose');
 
 const RESOLVERS = {
   static: ({ value }) => value,
@@ -102,6 +103,36 @@ const RESOLVERS = {
   prompt: ({ question, name }) => {
     const q = question || name || 'value';
     throw new Error(`required var "${q}" not provided. pass it via override: --var ${q}=...`);
+  },
+
+  /**
+   * Issues an HS256 JWT for ADMIN_USER_ID — useful to seed ${ADMIN_JWT} before steps run.
+   *
+   *   { name: "ADMIN_JWT", resolver: "jwt.sign_admin",
+   *     args: { expires_in: 3600 } }
+   *
+   * Reads ADMIN_USER_ID and SUPABASE_JWT_SECRET from project vars (second arg)
+   * or from process.env as fallback.
+   */
+  'jwt.sign_admin': async (args = {}, projectVars) => {
+    const { user_id, expires_in = 3600 } = args;
+    const sub = user_id || projectVars?.ADMIN_USER_ID;
+    if (!sub) {
+      throw new Error('jwt.sign_admin: missing user_id arg or ADMIN_USER_ID project var');
+    }
+    const secret = projectVars?.SUPABASE_JWT_SECRET || process.env.SUPABASE_JWT_SECRET;
+    if (!secret) {
+      throw new Error('jwt.sign_admin: missing SUPABASE_JWT_SECRET (project var or env)');
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    return await new SignJWT({ role: 'authenticated' })
+      .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+      .setSubject(sub)
+      .setAudience('authenticated')
+      .setIssuedAt(now)
+      .setExpirationTime(now + expires_in)
+      .sign(new TextEncoder().encode(secret));
   },
 };
 
