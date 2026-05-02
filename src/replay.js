@@ -12,7 +12,9 @@ const projectsLib = require('./projects');
 const { goto, click, fill, selectOption, press, waitFor, waitMs, screenshotAction, evalJs, toggle, handleDialog, verifyExpect, extract, assertEq } = require('./actions');
 const { httpRequest, httpAssertStatus } = require('./actions/http');
 const { jwtSign } = require('./actions/jwt');
-const { recordHttpCall } = require('./db');
+const { auditAssertEntry } = require('./actions/audit');
+const { createClient } = require('@supabase/supabase-js');
+const { recordHttpCall, recordAuditEntry } = require('./db');
 const linter = require('./linter');
 
 const BROWSERLESS_WS = process.env.BROWSERLESS_WS || 'ws://localhost:3000';
@@ -27,7 +29,19 @@ const HANDLERS = {
   'http.request': httpRequest,
   'http.assert_status': httpAssertStatus,
   'jwt.sign': jwtSign,
+  'audit.assert_entry': auditAssertEntry,
 };
+
+/**
+ * Create a Supabase client from vars or env. Returns null if credentials are
+ * missing — callers that need it (audit.* actions) will throw on demand.
+ */
+function makeSupabaseClient(vars) {
+  const url = vars?.SUPABASE_URL || process.env.SUPABASE_URL;
+  const key = vars?.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
 function loadFlow(flowId) {
   const row = db.prepare('SELECT * FROM flows WHERE id = ?').get(flowId);
@@ -147,8 +161,8 @@ async function runFlow(flowId, env) {
 
       let result;
       try {
-        // http.* and jwt.* actions receive a shared ctx object (persisted per run for lastHttpResult)
-        if (step.action.startsWith('http.') || step.action.startsWith('jwt.')) {
+        // http.*, jwt.*, and audit.* actions receive a shared ctx object (persisted per run for lastHttpResult)
+        if (step.action.startsWith('http.') || step.action.startsWith('jwt.') || step.action.startsWith('audit.')) {
           httpCtx.stepN = step.n;
           // jwt.* needs vars (for store_as write-back and SUPABASE_JWT_SECRET lookup)
           httpCtx.vars = vars;
@@ -288,6 +302,8 @@ async function executeReplay(flowId, overrides = {}, onEvent = null, meta = {}) 
     runId,
     stepN: null,
     recordCall: recordHttpCall,
+    recordAuditEntry,
+    supabase: makeSupabaseClient(vars),
   };
   try {
     await runFlow(flowId, { vars, ctx, session, emit, stepLog, allAssertions, prefix: '', depth: 0, runId, httpCtx });
@@ -433,6 +449,8 @@ async function runFlowOnSession({ flowId, overrides = {}, session, ctx = null, o
     runId: resolvedRunId,
     stepN: null,
     recordCall: recordHttpCall,
+    recordAuditEntry,
+    supabase: makeSupabaseClient(seeded),
   };
   const env = {
     vars: seeded,

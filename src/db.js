@@ -244,6 +244,25 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_http_calls_trace ON http_calls (trace_id);
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS audit_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    step_n INTEGER NOT NULL,
+    trace_id TEXT NOT NULL,
+    audit_log_id INTEGER,
+    action TEXT,
+    http_status INTEGER,
+    status TEXT,
+    latency_ms INTEGER,
+    user_id TEXT,
+    raw_json TEXT,
+    fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_entries_run ON audit_entries (run_id);
+  CREATE INDEX IF NOT EXISTS idx_audit_entries_trace ON audit_entries (trace_id);
+`);
+
 // Add project_id to existing tables (idempotent: ignore "duplicate column" errors)
 for (const sql of [
   `ALTER TABLE flows ADD COLUMN project_id TEXT`,
@@ -282,5 +301,18 @@ function recordHttpCall(callRecord) {
   );
 }
 
+function recordAuditEntry(entry) {
+  return db.prepare(`INSERT INTO audit_entries
+    (run_id, step_n, trace_id, audit_log_id, action, http_status, status,
+     latency_ms, user_id, raw_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    entry.run_id, entry.step_n, entry.trace_id, entry.audit_log_id,
+    entry.action, entry.http_status, entry.status,
+    entry.latency_ms, entry.user_id, entry.raw_json,
+  );
+}
+
 db.recordHttpCall = recordHttpCall;
+db.recordAuditEntry = recordAuditEntry;
 module.exports = db;
