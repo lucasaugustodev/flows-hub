@@ -11,10 +11,11 @@ const assert = require('node:assert');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 
 // Aponta DB para arquivo temporário isolado ANTES de qualquer require do src/
-const TMP_DB = path.join(__dirname, '..', '.tmp-test-replay-' + Date.now() + '.db');
+const TMP_DB = path.join(os.tmpdir(), 'flows-hub-test-' + Date.now() + '.db');
 process.env.DB_FILE = TMP_DB;
 
 let echoServer;

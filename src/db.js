@@ -282,5 +282,5 @@ function recordHttpCall(callRecord) {
   );
 }
 
+db.recordHttpCall = recordHttpCall;
 module.exports = db;
-module.exports.recordHttpCall = recordHttpCall;
