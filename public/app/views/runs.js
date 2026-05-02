@@ -199,12 +199,13 @@ export async function renderRunDetail(slug, id) {
   const redacted = Object.fromEntries(Object.entries(vars).map(([k, v]) =>
     [k, /password|secret|token/i.test(k) ? '<redacted>' : v]));
 
-  // Bind the filter + triage + notes + LLM-lint handlers after HTML lands.
+  // Bind the filter + triage + notes + LLM-lint + run-detail tabs handlers after HTML lands.
   setTimeout(() => {
     bindFindingsFilter();
     if (canTriage) bindFindingsTriage(slug, id);
     bindFindingsNotes(slug, id, canTriage);
     if (canTriage) bindLLMLint(slug, id);
+    bindRunDetailTabs(slug, id);
   }, 0);
 
   return `
@@ -252,6 +253,46 @@ export async function renderRunDetail(slug, id) {
     <div class="card" data-steps-card>
       <h3>steps (${steps.length})</h3>
       ${stepHtml}
+    </div>
+
+    <div class="card" data-run-detail-tabs>
+      <div class="run-tabs">
+        <button class="tab-btn active" data-tab="api-calls">API Calls</button>
+        <button class="tab-btn" data-tab="audit-log">Audit Log</button>
+      </div>
+
+      <div class="tab-panel" data-panel="api-calls">
+        <table class="table" id="apiCallsTable">
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Method</th>
+              <th>URL</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>Trace ID</th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="muted" style="text-align:center;padding:16px;">click to load…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="tab-panel" data-panel="audit-log" style="display:none">
+        <table class="table" id="auditLogTable">
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Action</th>
+              <th>Status</th>
+              <th>HTTP</th>
+              <th>Latency</th>
+              <th>User</th>
+              <th>Trace ID</th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="7" class="muted" style="text-align:center;padding:16px;">click to load…</td></tr></tbody>
+        </table>
+      </div>
     </div>
   `;
 }
@@ -513,6 +554,100 @@ function bindLLMLint(slug, runId) {
       btn.textContent = orig;
     }
   };
+}
+
+/**
+ * Wire the API Calls / Audit Log tabs in the run detail page.
+ * First click fetches data and populates the table; subsequent clicks just
+ * toggle visibility without re-fetching.
+ */
+function bindRunDetailTabs(slug, runId) {
+  const container = document.querySelector('[data-run-detail-tabs]');
+  if (!container) return;
+
+  const btns = container.querySelectorAll('.tab-btn');
+  const panels = container.querySelectorAll('.tab-panel');
+
+  // Track which panels have already been loaded.
+  const loaded = {};
+
+  // Auto-load the initially visible panel (api-calls).
+  loadApiCalls(container, slug, runId, loaded);
+
+  btns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.tab;
+
+      // Update active button
+      btns.forEach(b => b.classList.toggle('active', b === btn));
+
+      // Show/hide panels
+      panels.forEach(p => {
+        p.style.display = p.dataset.panel === target ? '' : 'none';
+      });
+
+      // Lazy-load on first click
+      if (target === 'api-calls' && !loaded['api-calls']) {
+        loadApiCalls(container, slug, runId, loaded);
+      }
+      if (target === 'audit-log' && !loaded['audit-log']) {
+        loadAuditEntries(container, slug, runId, loaded);
+      }
+    });
+  });
+}
+
+async function loadApiCalls(container, slug, runId, loaded) {
+  const tbody = container.querySelector('#apiCallsTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:16px;">loading…</td></tr>';
+  try {
+    const { calls } = await api(`/api/runs/${encodeURIComponent(runId)}/http-calls`, { project: slug });
+    loaded['api-calls'] = true;
+    if (!calls || calls.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="muted" style="text-align:center;padding:16px;">no HTTP calls recorded for this run.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = calls.map(c => `
+      <tr>
+        <td>${esc(c.step_n)}</td>
+        <td><code>${esc(c.method)}</code></td>
+        <td style="max-width:320px;word-break:break-all;"><code>${esc(c.url)}</code></td>
+        <td>${c.response_status != null ? esc(String(c.response_status)) : '—'}</td>
+        <td class="muted">${esc(c.latency_ms)}ms</td>
+        <td class="muted"><code>${esc(c.trace_id)}</code></td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="error-banner">${esc(e.message)}</div></td></tr>`;
+  }
+}
+
+async function loadAuditEntries(container, slug, runId, loaded) {
+  const tbody = container.querySelector('#auditLogTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px;">loading…</td></tr>';
+  try {
+    const { entries } = await api(`/api/runs/${encodeURIComponent(runId)}/audit-entries`, { project: slug });
+    loaded['audit-log'] = true;
+    if (!entries || entries.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px;">no audit entries for this run.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = entries.map(e => `
+      <tr>
+        <td>${esc(e.step_n)}</td>
+        <td><code>${esc(e.action)}</code></td>
+        <td><span class="badge ${esc(e.status)}">${esc(e.status)}</span></td>
+        <td>${e.http_status != null ? esc(String(e.http_status)) : '—'}</td>
+        <td class="muted">${esc(e.latency_ms)}ms</td>
+        <td class="muted"><code>${esc((e.user_id || '').slice(0, 8))}</code></td>
+        <td class="muted"><code>${esc(e.trace_id)}</code></td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="error-banner">${esc(e.message)}</div></td></tr>`;
+  }
 }
 
 function bumpNotesCount(thread, delta) {
