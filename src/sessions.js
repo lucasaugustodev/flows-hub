@@ -69,7 +69,9 @@ function buildSession(id, browser, context, page) {
 
 async function createSession({ projectId = null, ownerUserId = null } = {}) {
   const id = newSessionId();
-  const browser = await chromium.connect(buildConnectUrl(BROWSERLESS_WS));
+  const browser = (BROWSERLESS_WS && process.env.USE_BROWSERLESS === '1')
+    ? await chromium.connect(buildConnectUrl(BROWSERLESS_WS))
+    : await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1366, height: 768 } });
   const page = await context.newPage();
   page.setDefaultTimeout(30000);

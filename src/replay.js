@@ -294,7 +294,12 @@ async function executeReplay(flowId, overrides = {}, onEvent = null, meta = {}) 
     emit('var_resolved', { name, source: 'override', value: redact(name, value) });
   }
 
-  const browser = await chromium.connect(BROWSERLESS_WS);
+  // Conecta ao browserless se BROWSERLESS_WS configurado, senão launch local.
+  // Playwright 1.59+ não é suportado por browserless v2 (só 1.55-1.57), então
+  // launch local é a alternativa preferida quando playwright é mais novo.
+  const browser = (BROWSERLESS_WS && process.env.USE_BROWSERLESS === '1')
+    ? await chromium.connect(BROWSERLESS_WS)
+    : await chromium.launch({ headless: true });
   const browserCtx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
   const page = await browserCtx.newPage();
   page.setDefaultTimeout(30000);
