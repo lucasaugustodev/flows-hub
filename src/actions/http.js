@@ -44,20 +44,31 @@ async function httpRequest(ctx, args = {}) {
   };
   if (typeof ctx.recordCall === 'function') ctx.recordCall(callRecord);
 
-  if (err) {
-    return {
-      ok: false, error: err, status: null, body: null, headers: null,
-      latency_ms: latency, trace_id: traceId,
-    };
-  }
-  return {
-    ok: resp.ok,
-    status: resp.status,
-    body: respBody,
-    headers: Object.fromEntries(resp.headers.entries()),
-    latency_ms: latency,
-    trace_id: traceId,
-  };
+  const ret = err
+    ? { ok: false, error: err, status: null, body: null, headers: null, latency_ms: latency, trace_id: traceId }
+    : { ok: resp.ok, status: resp.status, body: respBody, headers: Object.fromEntries(resp.headers.entries()), latency_ms: latency, trace_id: traceId };
+  if (ctx) ctx.lastHttpResult = ret;
+  return ret;
 }
 
-module.exports = { httpRequest };
+function httpAssertStatus(ctx, args = {}) {
+  const last = ctx?.lastHttpResult;
+  if (!last) {
+    throw new Error('http.assert_status requires a previous http.* call (ctx.lastHttpResult missing)');
+  }
+  const { equals, in: oneOf, not } = args;
+
+  if (equals != null && last.status !== equals) {
+    throw new Error(`status mismatch: expected ${equals}, got ${last.status}`);
+  }
+  if (Array.isArray(oneOf) && !oneOf.includes(last.status)) {
+    throw new Error(`status mismatch: expected in [${oneOf.join(',')}], got ${last.status}`);
+  }
+  if (not != null && last.status === not) {
+    throw new Error(`status mismatch: expected != ${not}, got ${last.status}`);
+  }
+
+  return { ok: true, status: last.status };
+}
+
+module.exports = { httpRequest, httpAssertStatus };

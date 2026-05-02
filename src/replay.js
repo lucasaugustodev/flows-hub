@@ -10,7 +10,7 @@ const db = require('./db');
 const { substitute, RESOLVERS } = require('./resolvers');
 const projectsLib = require('./projects');
 const { goto, click, fill, selectOption, press, waitFor, waitMs, screenshotAction, evalJs, toggle, handleDialog, verifyExpect, extract, assertEq } = require('./actions');
-const { httpRequest } = require('./actions/http');
+const { httpRequest, httpAssertStatus } = require('./actions/http');
 const { recordHttpCall } = require('./db');
 const linter = require('./linter');
 
@@ -24,6 +24,7 @@ const HANDLERS = {
   eval: evalJs, toggle, dialog: handleDialog,
   extract, assert_eq: assertEq,
   'http.request': httpRequest,
+  'http.assert_status': httpAssertStatus,
 };
 
 function loadFlow(flowId) {
@@ -53,7 +54,7 @@ function evalWhen(expr, vars) {
 async function runFlow(flowId, env) {
   if (env.depth > MAX_INVOKE_DEPTH) throw new Error(`invoke_flow depth exceeded (${MAX_INVOKE_DEPTH})`);
   const flow = loadFlow(flowId);
-  const { vars, ctx, session, emit, stepLog, prefix, runId } = env;
+  const { vars, ctx, session, emit, stepLog, prefix, runId, httpCtx } = env;
 
   const stepLabel = (n) => prefix ? `${prefix}${n}` : String(n);
 
@@ -144,13 +145,9 @@ async function runFlow(flowId, env) {
 
       let result;
       try {
-        // http.* actions receive a ctx object instead of a browser session
+        // http.* actions receive a shared ctx object (persisted per run for lastHttpResult)
         if (step.action.startsWith('http.')) {
-          const httpCtx = {
-            runId,
-            stepN: step.n,
-            recordCall: recordHttpCall,
-          };
+          httpCtx.stepN = step.n;
           result = await handler(httpCtx, args);
         } else {
           result = await handler(session, args);
@@ -282,8 +279,14 @@ async function executeReplay(flowId, overrides = {}, onEvent = null, meta = {}) 
   };
 
   const allAssertions = [];
+  // httpCtx is created once per run so that lastHttpResult survives across steps
+  const httpCtx = {
+    runId,
+    stepN: null,
+    recordCall: recordHttpCall,
+  };
   try {
-    await runFlow(flowId, { vars, ctx, session, emit, stepLog, allAssertions, prefix: '', depth: 0, runId });
+    await runFlow(flowId, { vars, ctx, session, emit, stepLog, allAssertions, prefix: '', depth: 0, runId, httpCtx });
   } catch (e) {
     status = 'failed';
     error = e.message;
@@ -421,6 +424,12 @@ async function runFlowOnSession({ flowId, overrides = {}, session, ctx = null, o
   if (projectId) { try { Object.assign(seeded, projectsLib.getVarsAsObject(projectId)); } catch {} }
   Object.assign(seeded, overrides);
   const resolvedRunId = runId || crypto.randomBytes(8).toString('hex');
+  // httpCtx is created once per run so that lastHttpResult survives across steps
+  const httpCtxForRun = {
+    runId: resolvedRunId,
+    stepN: null,
+    recordCall: recordHttpCall,
+  };
   const env = {
     vars: seeded,
     ctx: ctx || { cleanup: [], mailtmInstances: {} },
@@ -431,6 +440,7 @@ async function runFlowOnSession({ flowId, overrides = {}, session, ctx = null, o
     prefix: '',
     depth: 0,
     runId: resolvedRunId,
+    httpCtx: httpCtxForRun,
   };
   try {
     await runFlow(flowId, env);
