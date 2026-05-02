@@ -150,9 +150,8 @@ async function runFlow(flowId, env) {
         // http.* and jwt.* actions receive a shared ctx object (persisted per run for lastHttpResult)
         if (step.action.startsWith('http.') || step.action.startsWith('jwt.')) {
           httpCtx.stepN = step.n;
-          // jwt.* needs vars (for store_as write-back) and env (for JWT_SECRET fallback)
+          // jwt.* needs vars (for store_as write-back and SUPABASE_JWT_SECRET lookup)
           httpCtx.vars = vars;
-          httpCtx.env = vars;
           result = await handler(httpCtx, args);
         } else {
           result = await handler(session, args);

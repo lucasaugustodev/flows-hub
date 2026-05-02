@@ -4,9 +4,9 @@ async function jwtSign(ctx, args = {}) {
   const { sub, role = 'authenticated', aud = 'authenticated', expires_in = 3600 } = args;
   if (!sub) throw new Error('jwt.sign requires sub');
 
-  const secret = ctx?.env?.JWT_SECRET || process.env.SUPABASE_JWT_SECRET;
+  const secret = ctx?.vars?.SUPABASE_JWT_SECRET || process.env.SUPABASE_JWT_SECRET;
   if (!secret) {
-    throw new Error('jwt.sign requires JWT_SECRET in ctx.env or SUPABASE_JWT_SECRET in process.env');
+    throw new Error('jwt.sign requires SUPABASE_JWT_SECRET (project var ou process.env)');
   }
 
   const now = Math.floor(Date.now() / 1000);
