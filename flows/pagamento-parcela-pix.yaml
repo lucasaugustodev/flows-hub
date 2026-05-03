@@ -109,7 +109,7 @@ steps:
 
   - n: 19
     action: wait_ms
-    args: { ms: 6000 }
+    args: { ms: 15000 }
 
   - n: 20
     action: screenshot
