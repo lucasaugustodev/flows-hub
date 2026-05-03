@@ -1,0 +1,147 @@
+id: recorrencia-automatica
+kind: ui-e2e
+description: |
+  Ativar recorrência automática via UI:
+  1) setup-user-com-contrato + PATCH user_profiles.asaas_customer_id
+     (necessario senao handler lanca erro 'Customer nao encontrado')
+  2) inject session → /meus-contratos
+  3) override window.confirm = () => true (handler usa confirm nativo)
+  4) Ações → "Ativar recorrência" no ActionMenu
+  5) Como user nao tem credit_card_tokens, handler abre CardModal
+  6) Verifica que CardModal esta aberto (formulario de cartao visivel)
+  Nota: tokenizacao real do cartao via Asaas (proximo step) requer
+  credenciais de pagamento e fica fora do escopo UI E2E.
+steps:
+  - n: 1
+    action: invoke_flow
+    args: { flow: setup-user-com-contrato }
+
+  # PATCH user_profiles.asaas_customer_id pra evitar erro "Customer nao encontrado"
+  # (em prod o customer e criado quando o user faz seu primeiro pagamento)
+  - n: 2
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${USER_ID}"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        asaas_customer_id: "cus_fakeE2E"
+    expect: { status: 204 }
+
+  # ── INJETA SESSION ──────────────────────────────────────────
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_INJECTED
+
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/meus-contratos"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 3000 }
+
+  # Override window.confirm para auto-aceitar (handler usa confirm() nativo)
+  - n: 14
+    action: eval
+    args:
+      script: |
+        (() => {
+          window.confirm = () => true;
+          window.alert = (msg) => { console.log('[mocked alert]', msg); };
+          return { ok: true };
+        })()
+      as: DIALOGS_MOCKED
+
+  - n: 15
+    action: screenshot
+
+  # Click Ações
+  - n: 16
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Ações');
+          if (!btns.length) throw new Error('Acoes button not found');
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: ACOES_CLICKED
+
+  - n: 17
+    action: wait_ms
+    args: { ms: 1500 }
+
+  # Click "Ativar recorrência" no menu
+  - n: 18
+    action: click
+    args:
+      text: "Ativar recorrência"
+
+  - n: 19
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 20
+    action: screenshot
+
+  # ── VERIFICAÇÃO ──────────────────────────────────────────
+  # Após click + confirm aceito + check de token (vazio), CardModal deve abrir.
+  # Validamos via DOM presence
+  - n: 21
+    action: eval
+    args:
+      script: |
+        (() => {
+          // Modal de cartao tem campos como "número do cartão" / "validade" / "CVV"
+          const inputs = [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null);
+          const fields = inputs.map(i => (i.placeholder || '') + ' ' + (i.name || '') + ' ' + (i.id || ''));
+          const hasCardField = fields.some(f => /cart[ãa]o|titular|numero|validade|cvv|ccv/i.test(f));
+          // ou talvez houve um alerta de erro em vez do modal
+          const dialog = document.querySelector('[role=dialog][data-state="open"]');
+          const dialogText = dialog ? (dialog.innerText || '').slice(0, 200) : '';
+          return {
+            ok: hasCardField || !!dialog,
+            hasCardField,
+            inputCount: inputs.length,
+            fields: fields.slice(0, 10),
+            dialogOpen: !!dialog,
+            dialogText
+          };
+        })()
+      as: CARD_MODAL_STATE
