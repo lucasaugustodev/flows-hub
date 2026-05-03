@@ -106,7 +106,7 @@ steps:
             const cls = d.className || '';
             return cls.includes('cursor-pointer') && cls.includes('border') && cls.includes('rounded-lg');
           });
-          if (!cards.length) return { ok: false, reason: 'no plan card', cards: cards.length };
+          if (!cards.length) throw new Error('no plan card found');
           cards[0].scrollIntoView({ block: 'center' });
           cards[0].click();
           return { ok: true, cards: cards.length };
@@ -128,7 +128,7 @@ steps:
         (() => {
           const btns = [...document.querySelectorAll('button')]
             .filter(b => b.textContent.trim() === 'Continuar' && !b.disabled);
-          if (!btns.length) return { ok: false, reason: 'no Continuar (selecao->preview)' };
+          if (!btns.length) throw new Error('selecao->preview Continuar button not found');
           btns[0].scrollIntoView({ block: 'center' });
           btns[0].click();
           return { ok: true };
@@ -149,13 +149,16 @@ steps:
       script: |
         (() => {
           const btns = [...document.querySelectorAll('button')]
-            .filter(b => b.textContent.trim() === 'Continuar' && !b.disabled);
-          if (!btns.length) return { ok: false, reason: 'no Continuar (preview->configuracao)' };
+            .filter(b => /configurar parcelamento/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btns.length) {
+            const all = [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean);
+            throw new Error('preview->configuracao button not found. visible buttons: ' + JSON.stringify(all.slice(0,20)));
+          }
           btns[0].scrollIntoView({ block: 'center' });
           btns[0].click();
           return { ok: true };
         })()
-      as: CONTINUAR_CONFIG
+      as: CONFIGURAR_PARCELAMENTO
 
   - n: 28
     action: wait_ms
@@ -172,7 +175,7 @@ steps:
         (() => {
           const dayBtns = [...document.querySelectorAll('button[type="button"]')]
             .filter(b => !b.disabled && /^\s*\d{1,2}\s*$/.test(b.textContent));
-          if (!dayBtns.length) return { ok: false, reason: 'no available day' };
+          if (!dayBtns.length) throw new Error('no available calendar day');
           dayBtns[0].scrollIntoView({ block: 'center' });
           dayBtns[0].click();
           return { ok: true, day: dayBtns[0].textContent.trim() };
@@ -194,7 +197,7 @@ steps:
         (() => {
           const btns = [...document.querySelectorAll('button')]
             .filter(b => /confirmar altera/i.test(b.textContent.trim()) && !b.disabled);
-          if (!btns.length) return { ok: false, reason: 'no Confirmar Alteração' };
+          if (!btns.length) throw new Error('Confirmar Alteração button not found');
           btns[0].scrollIntoView({ block: 'center' });
           btns[0].click();
           return { ok: true };
