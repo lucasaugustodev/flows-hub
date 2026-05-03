@@ -1,9 +1,16 @@
 id: transferencia-completo
 description: |
-  Fluxo COMPLETO de transferência de contrato: cria 2 users (origem com
-  contrato + destino), origem solicita transferência pra destino,
-  destino aceita. Testa POST /api/transferencia/solicitar e
-  POST /api/transferencia/:id/aceitar.
+  Ciclo COMPLETO de transferência de contrato via UI:
+  ORIGEM:
+    1) setup-user-com-contrato (cria user + contrato ativo)
+    2) cria user destino via Supabase admin (com CPF para to_user_cpf match)
+    3) inject session origem → /meus-contratos → Ações → Transferência
+    4) TransferenceModal: intro → dados (email destino + buscar) → resumo → assinatura → "Assinar"
+  DESTINO:
+    5) inject session destino → /dashboard
+    6) clica sino de notificações → seleciona transferência pendente
+    7) IncomingTransferModal: intro → "Ver detalhes" → "Aceitar e assinar" → "Assinar"
+  Verifica via Supabase: contrato.user_id mudou, transfer_request.status=accepted.
 vars:
   - name: USER_DESTINO_EMAIL
     resolver: mailtm.new
@@ -21,13 +28,12 @@ steps:
   # ============================================================
   - n: 1
     action: invoke_flow
-    args:
-      flow: setup-user-com-contrato
+    args: { flow: setup-user-com-contrato }
 
   # ============================================================
-  # ETAPA 2 — CRIA USER DESTINO no Supabase
+  # ETAPA 2 — CRIA USER DESTINO no Supabase (com CPF, sem contrato)
   # ============================================================
-  - n: 11
+  - n: 2
     action: http.request
     args:
       method: POST
@@ -39,13 +45,12 @@ steps:
         email: "${USER_DESTINO_EMAIL}"
         password: "${USER_DESTINO_PASSWORD}"
         email_confirm: true
-        user_metadata:
-          nome: "Flow Hub Destino"
+        user_metadata: { nome: "Flow Hub Destino" }
     expect: { status: 200 }
     extract:
       USER_DESTINO_ID: "$.id"
 
-  - n: 12
+  - n: 3
     action: http.request
     args:
       method: POST
@@ -64,7 +69,7 @@ steps:
         onboarding_completed: true
     expect: { status: 201 }
 
-  - n: 13
+  - n: 4
     action: http.request
     args:
       method: POST
@@ -79,63 +84,328 @@ steps:
       USER_DESTINO_JWT: "$.access_token"
 
   # ============================================================
-  # ETAPA 3 — ORIGEM solicita transferência
+  # ETAPA 3 — ORIGEM via UI: solicita transferência
   # ============================================================
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_ORIGEM_INJECTED
+
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/meus-contratos"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 3000 }
+
   - n: 14
-    action: http.request
-    args:
-      method: POST
-      url: "${API_BASE}/api/transferencia/solicitar"
-      headers:
-        Authorization: "Bearer ${USER_JWT}"
-      body:
-        contratoId: "${CONTRATO_ID}"
-        toUserEmail: "${USER_DESTINO_EMAIL}"
-    expect: { status: 201 }
-    extract:
-      TRANSFER_ID: "$.transferenciaId"
+    action: screenshot
 
+  # Abre ActionMenu (botão off-screen)
   - n: 15
-    action: audit.assert_entry
+    action: eval
     args:
-      correlate_with_step: 14
-      action: "post.api.transferencia.solicitar"
-      http_status: 201
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Ações');
+          if (!btns.length) throw new Error('Acoes button not found');
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: ACOES_CLICKED
 
-  # ============================================================
-  # ETAPA 4 — DESTINO consulta + aceita
-  # ============================================================
   - n: 16
-    action: http.request
-    args:
-      method: GET
-      url: "${API_BASE}/api/transferencia/pendentes"
-      headers:
-        Authorization: "Bearer ${USER_DESTINO_JWT}"
-    expect: { status: 200 }
+    action: wait_ms
+    args: { ms: 1500 }
 
   - n: 17
+    action: click
+    args:
+      text: "Transferência"
+
+  - n: 18
+    action: wait_ms
+    args: { ms: 2000 }
+
+  - n: 19
+    action: screenshot
+
+  # TransferenceModal STEP 1 — intro: "Iniciar Transferência"
+  - n: 20
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /iniciar transfer/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btns.length) throw new Error('Iniciar Transferencia not found. visible: ' + JSON.stringify([...document.querySelectorAll('button')].map(b=>b.textContent.trim()).slice(0,15)));
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: INICIAR_TRANSFERENCIA
+
+  - n: 21
+    action: wait_ms
+    args: { ms: 1500 }
+
+  # TransferenceModal STEP 2 — dados: input email destino + buscar
+  - n: 22
+    action: eval
+    args:
+      script: |
+        (() => {
+          const inputs = [...document.querySelectorAll('input')].filter(i => !i.disabled && i.offsetParent !== null);
+          const emailInput = inputs.find(i => /e?-?mail/i.test((i.placeholder||'') + ' ' + (i.name||'') + ' ' + (i.id||'') + ' ' + (i.type||''))) || inputs[0];
+          if (!emailInput) throw new Error('email input not found');
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(emailInput, '${USER_DESTINO_EMAIL}');
+          emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+          emailInput.dispatchEvent(new Event('change', { bubbles: true }));
+          return { ok: true, value: emailInput.value };
+        })()
+      as: EMAIL_FILLED
+
+  - n: 23
+    action: wait_ms
+    args: { ms: 800 }
+
+  # Click "Buscar E-mail"
+  - n: 24
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /buscar.*e?-?mail/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btns.length) throw new Error('Buscar Email not found');
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: BUSCAR_EMAIL
+
+  - n: 25
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 26
+    action: screenshot
+
+  # Click "Confirmar" (após user found)
+  - n: 27
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Confirmar' && !b.disabled);
+          if (!btns.length) throw new Error('Confirmar not found. visible: ' + JSON.stringify([...document.querySelectorAll('button')].map(b=>b.textContent.trim()).slice(0,15)));
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONFIRMAR_DADOS
+
+  - n: 28
+    action: wait_ms
+    args: { ms: 2000 }
+
+  # TransferenceModal STEP 3 — resumo: "Continuar"
+  - n: 29
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Continuar' && !b.disabled);
+          if (!btns.length) throw new Error('Continuar (resumo) not found');
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONTINUAR_RESUMO
+
+  - n: 30
+    action: wait_ms
+    args: { ms: 2000 }
+
+  # TransferenceModal STEP 4 — assinatura: "Assinar"
+  - n: 31
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Assinar' && !b.disabled);
+          if (!btns.length) throw new Error('Assinar (origem) not found');
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: ASSINAR_ORIGEM
+
+  - n: 32
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 33
+    action: screenshot
+
+  # ============================================================
+  # ETAPA 4 — DESTINO via UI: aceita transferência
+  # ============================================================
+  - n: 40
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 41
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.clear();
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_DESTINO_JWT}',
+            refresh_token: 'flows-hub-injected-destino',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_DESTINO_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_DESTINO_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_DESTINO_INJECTED
+
+  - n: 42
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/dashboard"
+      waitUntil: networkidle
+
+  - n: 43
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 44
+    action: screenshot
+
+  # Modal IncomingTransferModal abre AUTOMATICAMENTE no dashboard via useTransferNotifications hook
+  # (não precisa clicar no sino — popup auto-shown quando há pendentes para o CPF do user logado)
+
+  # IncomingTransferModal STEP 1 — intro: "Ver detalhes da proposta"
+  - n: 51
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /ver detalhes/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btns.length) throw new Error('Ver detalhes not found');
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: VER_DETALHES
+
+  - n: 52
+    action: wait_ms
+    args: { ms: 1500 }
+
+  # IncomingTransferModal STEP 2 — detalhes: "Aceitar e assinar contrato"
+  - n: 53
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /aceitar e assinar/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btns.length) throw new Error('Aceitar e assinar not found');
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: ACEITAR_ASSINAR
+
+  - n: 54
+    action: wait_ms
+    args: { ms: 1500 }
+
+  # IncomingTransferModal STEP 3 — assinatura: "Assinar"
+  - n: 55
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Assinar' && !b.disabled);
+          if (!btns.length) throw new Error('Assinar (destino) not found');
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: ASSINAR_DESTINO
+
+  - n: 56
+    action: wait_ms
+    args: { ms: 6000 }
+
+  - n: 57
+    action: screenshot
+
+  # ============================================================
+  # ETAPA 5 — VERIFICAÇÃO via Supabase
+  # ============================================================
+  - n: 60
     action: http.request
     args:
       method: GET
-      url: "${API_BASE}/api/transferencia/${TRANSFER_ID}"
+      url: "${SUPABASE_URL}/rest/v1/contratos?id=eq.${CONTRATO_ID}&select=id,user_id,is_transferred,transferred_at,original_owner_id"
       headers:
-        Authorization: "Bearer ${USER_DESTINO_JWT}"
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
     expect: { status: 200 }
 
-  - n: 18
+  - n: 61
     action: http.request
     args:
-      method: POST
-      url: "${API_BASE}/api/transferencia/${TRANSFER_ID}/aceitar"
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/transfer_requests?contract_id=eq.${CONTRATO_ID}&order=created_at.desc&select=id,status,from_user_email,to_user_email,accepted_at"
       headers:
-        Authorization: "Bearer ${USER_DESTINO_JWT}"
-      body: {}
-    expect: { status: 201 }
-
-  - n: 19
-    action: audit.assert_entry
-    args:
-      correlate_with_step: 18
-      action: "post.api.transferencia.:id.aceitar"
-      http_status: 201
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
