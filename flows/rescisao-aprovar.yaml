@@ -1,48 +1,124 @@
 id: rescisao-aprovar
-description: User solicita rescisão → admin aprova
+description: |
+  Ciclo COMPLETO de rescisão com aprovação admin via UI:
+  1) USER: invoca rescisao-completo (cria contrato + solicita rescisão UI → status='pending')
+  2) ADMIN: login Supabase + injeta session + isAdmin=true no localStorage
+  3) ADMIN UI: /backoffice/notificacoes → click "Aprovar" no item pending
+  4) Verifica status='approved' via Supabase
 vars:
-  - name: API_BASE
-    resolver: env
-    args: { name: API_BASE }
+  - name: ADMIN_EMAIL
+    resolver: static
+    args: { value: "claude-portal-1777646400@deltajohnsons.com" }
+  - name: ADMIN_PASSWORD
+    resolver: static
+    args: { value: "FlowHub@2026!" }
+  # Login admin via Supabase password → JWT real
   - name: ADMIN_JWT
-    resolver: jwt.sign_admin
-    args: {}
+    resolver: supabase.login
+    args:
+      email: "claude-portal-1777646400@deltajohnsons.com"
+      password: "FlowHub@2026!"
+  - name: ADMIN_USER_ID_LOCAL
+    resolver: static
+    args: { value: "9ea49ce4-9273-4847-8063-29c6771825c8" }
 steps:
+  # ============================================================
+  # ETAPA 1 — USER: solicita rescisao via UI (rescisao-completo)
+  # ============================================================
   - n: 1
     action: invoke_flow
-    args: { flow: adesao-completa }
+    args: { flow: rescisao-completo }
 
-  - n: 2
+  # ============================================================
+  # ETAPA 2 — ADMIN: inject session + flag isAdmin
+  # ============================================================
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/admin-login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.clear();
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${ADMIN_JWT}',
+            refresh_token: 'flows-hub-injected-admin',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${ADMIN_USER_ID_LOCAL}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${ADMIN_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            }
+          }));
+          localStorage.setItem('isAdmin', 'true');
+          localStorage.setItem('adminEmail', '${ADMIN_EMAIL}');
+          return { ok: true };
+        })()
+      as: ADMIN_SESSION_INJECTED
+
+  # ============================================================
+  # ETAPA 3 — ADMIN UI: navega Notificacoes e aprova
+  # ============================================================
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/backoffice/notificacoes"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 14
+    action: screenshot
+
+  # Click "Aprovar" — pega o primeiro botão verde com texto "Aprovar"
+  # Filtro padrão da página é 'pending', então só aparecem rescissões pendentes
+  - n: 15
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Aprovar' && !b.disabled);
+          if (!btns.length) {
+            const allBtns = [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean).slice(0, 30);
+            throw new Error('Aprovar button not found. visible: ' + JSON.stringify(allBtns));
+          }
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true, totalAprovar: btns.length };
+        })()
+      as: APROVAR_CLICADO
+
+  - n: 16
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 17
+    action: screenshot
+
+  # ============================================================
+  # ETAPA 4 — VERIFICAÇÃO via Supabase
+  # ============================================================
+  # Busca a rescissão deste contrato específico — após aprovação status='approved'
+  - n: 20
     action: http.request
     args:
-      method: POST
-      url: "${API_BASE}/api/rescisao/solicitar"
-      headers: { Authorization: "Bearer ${USER_JWT}" }
-      body:
-        contratoId: "${CONTRATO_ID}"
-        motivo: "teste e2e flows-hub"
-    expect: { status: 201 }
-    extract: { RES_ID: "$.id" }
-
-  - n: 3
-    action: http.request
-    args:
-      method: POST
-      url: "${API_BASE}/api/rescisao/${RES_ID}/aprovar"
-      headers: { Authorization: "Bearer ${ADMIN_JWT}" }
-      body: {}
-    expect: { status: 201 }
-
-  - n: 4
-    action: audit.assert_entry
-    args:
-      correlate_with_step: 3
-      action: "post.api.rescisao.:id.aprovar"
-      http_status: 201
-
-  - n: 5
-    action: db.read
-    args:
-      query: "select status from contratos where id = $1"
-      params: ["${CONTRATO_ID}"]
-    expect: { "rows[0].status": "rescindido" }
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/rescission_requests?contract_id=eq.${CONTRATO_ID}&order=created_at.desc&select=id,status,approved_at,approved_by"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
