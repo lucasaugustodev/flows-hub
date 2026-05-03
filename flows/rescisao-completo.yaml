@@ -63,11 +63,20 @@ steps:
     action: screenshot
 
   # ── ABRE ACTIONMENU → RESCISÃO ────────────────────────────────
+  # Step 15: ActionMenu trigger fica off-screen no horizontal scroll do table.
+  # Click via eval direto no botao por texto exato (evita visibility/scroll issues)
   - n: 15
-    action: click
+    action: eval
     args:
-      text: "Ações"
-
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Ações');
+          if (!btns.length) return { ok: false, reason: 'no Acoes button found' };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true, found: btns.length };
+        })()
+      as: ACOES_CLICKED
   - n: 16
     action: wait_ms
     args: { ms: 800 }

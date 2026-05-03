@@ -157,3 +157,19 @@ steps:
     extract:
       CONTRATO_ID: "$.contratoId"
       NUMERO_CONTRATO: "$.numeroContrato"
+
+  # 10) WORKAROUND: backend nao seta turma_participantes.status='Ativo' apos confirmar
+  # frontend filtra por status='Ativo' em useUserTurmas - sem isso /meus-contratos fica vazio
+  - n: 10
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/turma_participantes?user_id=eq.${USER_ID}&turma_id=eq.${TURMA_ID}"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        status: "Ativo"
+        data_adesao: "2026-05-03T00:00:00.000Z"
+    expect: { status: 204 }

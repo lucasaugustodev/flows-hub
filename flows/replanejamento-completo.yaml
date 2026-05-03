@@ -61,11 +61,20 @@ steps:
     action: screenshot
 
   # ── ABRE ACTIONMENU → REPLANEJAMENTO FINANCEIRO ───────────────
+  # Step 15: ActionMenu trigger fica off-screen no horizontal scroll do table.
+  # Click via eval direto no botao por texto exato (evita visibility/scroll issues)
   - n: 15
-    action: click
+    action: eval
     args:
-      text: "Ações"
-
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Ações');
+          if (!btns.length) return { ok: false, reason: 'no Acoes button found' };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true, found: btns.length };
+        })()
+      as: ACOES_CLICKED
   - n: 16
     action: wait_ms
     args: { ms: 800 }
@@ -109,16 +118,46 @@ steps:
     action: screenshot
 
   # ── CONFIRMAR REPLANEJAMENTO ───────────────────────────────────
+  # Screen 1 button: 'Confirmar replanejamento financeiro' (lowercase r)
+  # via eval para evitar problema de visibility/scroll dentro do modal
   - n: 24
-    action: click
+    action: eval
     args:
-      text: "Confirmar Replanejamento Financeiro"
-
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /confirmar replanejamento financeiro/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btns.length) return { ok: false, reason: 'no confirm button (screen1)', visibleBtns: [...document.querySelectorAll('button')].map(b => b.textContent.trim()).slice(0, 30) };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONFIRM_SCREEN1
   - n: 25
+    action: wait_ms
+    args: { ms: 2000 }
+  - n: 25.1
+    action: screenshot
+  # Screen 2: Confirmar Replanejamento Financeiro (titulo) + 'Continuar com Replanejamento' (botao)
+  - n: 25.2
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /continuar com replanejamento/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btns.length) return { ok: false, reason: 'no continuar button (screen2)', visibleBtns: [...document.querySelectorAll('button')].map(b => b.textContent.trim()).slice(0, 30) };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONFIRM_SCREEN2
+
+  - n: 26
     action: wait_ms
     args: { ms: 5000 }
 
-  - n: 26
+  - n: 26.1
     action: screenshot
 
   # ── VERIFICAÇÃO VIA API ───────────────────────────────────────
