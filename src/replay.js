@@ -25,7 +25,33 @@ function jsonPath(obj, path) {
   }
   return cur;
 }
-const { httpRequest, httpAssertStatus } = require('./actions/http');
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function normalizeExpectedStatus(value) {
+  if (Array.isArray(value)) return value.map(v => Number(v));
+  return Number(value);
+}
+
+function assertHttpExpect(result, expect) {
+  if (!hasOwn(expect, 'status')) return false;
+
+  const expected = normalizeExpectedStatus(expect.status);
+  const actual = result?.status ?? null;
+  const passed = Array.isArray(expected)
+    ? expected.includes(actual)
+    : actual === expected;
+
+  if (!passed) {
+    const label = Array.isArray(expected) ? `[${expected.join(',')}]` : String(expected);
+    throw new Error(`status mismatch: expected ${label}, got ${actual}`);
+  }
+
+  return true;
+}
+const { httpRequest, httpAssertStatus, httpAssertJson } = require('./actions/http');
 const { jwtSign } = require('./actions/jwt');
 const { auditAssertEntry } = require('./actions/audit');
 const { createClient } = require('@supabase/supabase-js');
@@ -46,6 +72,7 @@ const HANDLERS = {
   extract, assert_eq: assertEq,
   'http.request': httpRequest,
   'http.assert_status': httpAssertStatus,
+  'http.assert_json': httpAssertJson,
   'jwt.sign': jwtSign,
   'audit.assert_entry': auditAssertEntry,
   'db.read': dbRead,
@@ -262,11 +289,21 @@ async function runFlow(flowId, env) {
       // Post-condition check (if step.expect was declared)
       if (step.expect) {
         const expectSubst = substitute(step.expect, vars);
-        const ev = await verifyExpect(session, expectSubst);
-        if (!ev.ok) {
-          throw new Error(`expect failed: ${ev.error}`);
+        const browserExpect = { ...expectSubst };
+
+        if (step.action.startsWith('http.') && hasOwn(browserExpect, 'status')) {
+          assertHttpExpect(result, browserExpect);
+          delete browserExpect.status;
+          emit('step_expect_ok', { n: label, expect: { status: expectSubst.status } });
         }
-        emit('step_expect_ok', { n: label, expect: expectSubst });
+
+        if (Object.keys(browserExpect).length > 0) {
+          const ev = await verifyExpect(session, browserExpect);
+          if (!ev.ok) {
+            throw new Error(`expect failed: ${ev.error}`);
+          }
+          emit('step_expect_ok', { n: label, expect: browserExpect });
+        }
       }
 
       const stepEntry = { n: label, action: step.action, ok: true, durationMs: Date.now() - stepStart, screenshot: result?.screenshot };

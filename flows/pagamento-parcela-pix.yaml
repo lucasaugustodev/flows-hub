@@ -1,0 +1,138 @@
+id: pagamento-parcela-pix
+kind: ui-e2e
+description: |
+  Pagamento de parcela via UI (PIX):
+  1) setup-user-com-contrato (user com contrato + parcelas pendentes)
+  2) inject session → /meus-pagamentos (aba "A pagar")
+  3) click "Pagar" na primeira parcela → abre PaymentModal
+  4) click "PIX" → handleGerarPix → abre PixModal com QR code
+  5) verifica pix gerado em 'pix_omie' / 'boletos' / wallet via Supabase
+  Nota: confirmacao do pagamento (PIX paid) e via webhook em produção;
+  aqui validamos que a UI gera o request de pagamento corretamente.
+steps:
+  - n: 1
+    action: invoke_flow
+    args: { flow: setup-user-com-contrato }
+
+  # ── INJETA SESSION ──────────────────────────────────────────
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_INJECTED
+
+  # ── NAVEGA MEUS PAGAMENTOS ──────────────────────────────────
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/meus-pagamentos"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 14
+    action: screenshot
+
+  # Click "Pagar" na primeira parcela pendente
+  - n: 15
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Pagar' && !b.disabled);
+          if (!btns.length) {
+            const all = [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean);
+            throw new Error('Pagar button not found. visible: ' + JSON.stringify(all.slice(0, 30)));
+          }
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true, count: btns.length };
+        })()
+      as: PAGAR_CLICKED
+
+  - n: 16
+    action: wait_ms
+    args: { ms: 2000 }
+
+  - n: 17
+    action: screenshot
+
+  # PaymentModal aberto. Click no botão "PIX"
+  - n: 18
+    action: eval
+    args:
+      script: |
+        (() => {
+          // Botão PIX dentro do PaymentModal — div com h4 "PIX"
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => {
+              const h4 = b.querySelector('h4');
+              return h4 && h4.textContent.trim() === 'PIX';
+            });
+          if (!btns.length) {
+            const headings = [...document.querySelectorAll('h4')].map(h => h.textContent.trim());
+            throw new Error('PIX option not found. h4 visible: ' + JSON.stringify(headings));
+          }
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: PIX_OPTION_CLICKED
+
+  - n: 19
+    action: wait_ms
+    args: { ms: 6000 }
+
+  - n: 20
+    action: screenshot
+
+  # ── VERIFICAÇÃO via Supabase ──────────────────────────────
+  # PIX gerado deve aparecer em pix_omie ou boletos (depende da implementação)
+  # Pelo menos uma das tabelas deve ter um registro novo pra esse user
+  - n: 30
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/pix_omie?user_id=eq.${USER_ID}&order=created_at.desc&limit=3&select=id,valor,status,created_at"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 31
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas?user_id=eq.${USER_ID}&contrato_id=eq.${CONTRATO_ID}&order=numero_parcela&limit=5&select=id,numero_parcela,status,valor"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }

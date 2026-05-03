@@ -1,14 +1,14 @@
-id: pagamento-parcela
+id: pagamento-parcela-boleto
 kind: ui-e2e
 description: |
-  Pagamento de parcela via UI (PIX):
+  Pagamento de parcela via UI (Boleto Bancário):
   1) setup-user-com-contrato (user com contrato + parcelas pendentes)
-  2) inject session → /meus-pagamentos (aba "A pagar")
-  3) click "Pagar" na primeira parcela → abre PaymentModal
-  4) click "PIX" → handleGerarPix → abre PixModal com QR code
-  5) verifica pix gerado em 'pix_omie' / 'boletos' / wallet via Supabase
-  Nota: confirmacao do pagamento (PIX paid) e via webhook em produção;
-  aqui validamos que a UI gera o request de pagamento corretamente.
+  2) inject session → /meus-pagamentos
+  3) click "Pagar" na primeira parcela → PaymentModal
+  4) click "Boleto Bancário" → handleGerarBoleto → BoletoModal abre
+  5) verifica boleto criado em tabela boletos via Supabase
+  Nota: compensação real do boleto leva até 3 dias úteis (banco).
+  UI E2E valida que a geração funcionou.
 steps:
   - n: 1
     action: invoke_flow
@@ -47,7 +47,6 @@ steps:
         })()
       as: SESSION_INJECTED
 
-  # ── NAVEGA MEUS PAGAMENTOS ──────────────────────────────────
   - n: 12
     action: goto
     args:
@@ -69,13 +68,10 @@ steps:
         (() => {
           const btns = [...document.querySelectorAll('button')]
             .filter(b => b.textContent.trim() === 'Pagar' && !b.disabled);
-          if (!btns.length) {
-            const all = [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean);
-            throw new Error('Pagar button not found. visible: ' + JSON.stringify(all.slice(0, 30)));
-          }
+          if (!btns.length) throw new Error('Pagar button not found');
           btns[0].scrollIntoView({ block: 'center' });
           btns[0].click();
-          return { ok: true, count: btns.length };
+          return { ok: true };
         })()
       as: PAGAR_CLICKED
 
@@ -86,53 +82,61 @@ steps:
   - n: 17
     action: screenshot
 
-  # PaymentModal aberto. Click no botão "PIX"
+  # PaymentModal aberto → click "Boleto Bancário"
   - n: 18
     action: eval
     args:
       script: |
         (() => {
-          // Botão PIX dentro do PaymentModal — div com h4 "PIX"
           const btns = [...document.querySelectorAll('button')]
             .filter(b => {
               const h4 = b.querySelector('h4');
-              return h4 && h4.textContent.trim() === 'PIX';
+              return h4 && /boleto banc[áa]rio/i.test(h4.textContent.trim());
             });
           if (!btns.length) {
             const headings = [...document.querySelectorAll('h4')].map(h => h.textContent.trim());
-            throw new Error('PIX option not found. h4 visible: ' + JSON.stringify(headings));
+            throw new Error('Boleto option not found. h4: ' + JSON.stringify(headings));
           }
           btns[0].click();
           return { ok: true };
         })()
-      as: PIX_OPTION_CLICKED
+      as: BOLETO_OPTION_CLICKED
 
   - n: 19
     action: wait_ms
-    args: { ms: 6000 }
+    args: { ms: 30000 }
 
   - n: 20
     action: screenshot
 
   # ── VERIFICAÇÃO via Supabase ──────────────────────────────
-  # PIX gerado deve aparecer em pix_omie ou boletos (depende da implementação)
-  # Pelo menos uma das tabelas deve ter um registro novo pra esse user
   - n: 30
     action: http.request
     args:
       method: GET
-      url: "${SUPABASE_URL}/rest/v1/pix_omie?user_id=eq.${USER_ID}&order=created_at.desc&limit=3&select=id,valor,status,created_at"
+      url: "${SUPABASE_URL}/rest/v1/boletos?user_id=eq.${USER_ID}&order=created_at.desc&limit=3&select=id,valor,status,linha_digitavel,created_at"
       headers:
         apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
         Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
     expect: { status: 200 }
 
   - n: 31
-    action: http.request
+    action: http.assert_json
     args:
-      method: GET
-      url: "${SUPABASE_URL}/rest/v1/parcelas?user_id=eq.${USER_ID}&contrato_id=eq.${CONTRATO_ID}&order=numero_parcela&limit=5&select=id,numero_parcela,status,valor"
-      headers:
-        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
-        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
-    expect: { status: 200 }
+      path: "$"
+      minLength: 1
+      message: "boleto deve ser criado no backend"
+
+  - n: 32
+    action: http.assert_json
+    args:
+      path: "$[0].id"
+      not_empty: true
+      message: "boleto criado deve ter id"
+
+  - n: 33
+    action: http.assert_json
+    args:
+      path: "$[0].linha_digitavel"
+      not_empty: true
+      message: "boleto criado deve ter linha digitavel"

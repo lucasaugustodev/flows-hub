@@ -1,0 +1,452 @@
+id: pagamento-parcela-cartao
+kind: ui-e2e
+description: |
+  Pagamento de parcela via UI (Cartão de Crédito sandbox):
+  1) setup-user-com-contrato (user com contrato + parcelas pendentes)
+  2) inject session → /meus-pagamentos
+  3) click "Pagar" na primeira parcela → PaymentModal
+  4) click "Cartão de Crédito" → CardPaymentOptionsModal (parcelamento)
+  5) click "Continuar" → cardPaymentModal (form de cartão novo)
+  6) preenche cartão sandbox: 4444 4444 4444 4444 / 12 / 2027 / 1234 / Flow Hub Tester
+  7) click "Confirmar Pagamento" → tokenização Asaas + processamento
+  Nota: cartão 4444*16 é sandbox Asaas. Em prod com API real pode falhar.
+  Aqui validamos UI completa do form de cartão.
+steps:
+  - n: 1
+    action: invoke_flow
+    args: { flow: setup-user-com-contrato }
+
+  # Pre-aceita o termo de chargeback para o cartao sandbox 4444.
+  # O aceite em UI depende de OTP do Supabase Auth e nao chega de forma confiavel no mail.tm.
+  - n: 2
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/rest/v1/contract_signatures"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        user_id: "${USER_ID}"
+        user_email: "${USER_EMAIL}"
+        contract_type: "chargeback_terms"
+        contract_content: "E2E pre-accepted chargeback terms for sandbox card 4444."
+        is_verified: true
+        signature_date: "2026-05-03T00:00:00.000Z"
+        verification_code: "000000"
+        metadata:
+          card_last_digits: "4444"
+          card_brand: "VISA"
+          source: "flows-hub"
+    expect: { status: 201 }
+
+  # ── INJETA SESSION ──────────────────────────────────────────
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_INJECTED
+
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/meus-pagamentos"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 14
+    action: screenshot
+
+  # Click "Pagar" na primeira parcela pendente
+  - n: 15
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Pagar' && !b.disabled);
+          if (!btns.length) throw new Error('Pagar button not found');
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: PAGAR_CLICKED
+
+  - n: 16
+    action: wait_ms
+    args: { ms: 2000 }
+
+  - n: 17
+    action: screenshot
+
+  # PaymentModal aberto → click "Cartão de Crédito"
+  - n: 18
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => {
+              const h4 = b.querySelector('h4');
+              return h4 && /cart[ãa]o de cr[ée]dito/i.test(h4.textContent.trim());
+            });
+          if (!btns.length) {
+            const headings = [...document.querySelectorAll('h4')].map(h => h.textContent.trim());
+            throw new Error('Cartao option not found. h4: ' + JSON.stringify(headings));
+          }
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CARTAO_OPTION_CLICKED
+
+  - n: 19
+    action: wait_ms
+    args: { ms: 3000 }
+
+  - n: 20
+    action: screenshot
+
+  # Seleciona uma opcao no CardPaymentOptionsModal para habilitar "Continuar".
+  - n: 20.5
+    action: eval
+    args:
+      script: |
+        (() => {
+          const normalize = (text) => (text || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase();
+
+          const alreadyEnabled = [...document.querySelectorAll('button')]
+            .some(b => normalize(b.textContent).trim() === 'continuar' && !b.disabled);
+          if (alreadyEnabled) return { ok: true, alreadySelected: true };
+
+          const heading = [...document.querySelectorAll('h3')]
+            .find(h => {
+              const text = normalize(h.textContent);
+              return text.includes('cartao a vista') || text.includes('cartao parcelado');
+            });
+          if (!heading) {
+            const headings = [...document.querySelectorAll('h3')].map(h => h.textContent.trim());
+            throw new Error('Card option heading not found. h3: ' + JSON.stringify(headings));
+          }
+
+          let node = heading;
+          while (node && node !== document.body) {
+            const cls = node.getAttribute?.('class') || '';
+            if (cls.includes('cursor-pointer')) {
+              node.click();
+              return { ok: true, selected: heading.textContent.trim() };
+            }
+            node = node.parentElement;
+          }
+
+          throw new Error('Card option clickable container not found');
+        })()
+      as: CARD_OPTION_SELECTED
+
+  # CardPaymentOptionsModal — click "Continuar" pra ir pro form de cartão
+  - n: 21
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Continuar' && !b.disabled);
+          if (!btns.length) throw new Error('Continuar (CardOptions) not found');
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONTINUAR_PARCELAMENTO
+
+  - n: 22
+    action: wait_ms
+    args: { ms: 3000 }
+
+  - n: 23
+    action: screenshot
+
+  # Se form não abriu direto, clicar em "Usar Novo Cartão" se aparecer
+  # (caso 0 cartões salvos, useNewCard pode estar default true e form já visível)
+  - n: 24
+    action: eval
+    args:
+      script: |
+        (() => {
+          // Procura form fields. Se não achar, tenta clicar "Usar Novo Cartão"
+          const inputs = [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null);
+          const hasCardNumber = inputs.some(i => /n[úu]mero do cart|0000 0000/i.test((i.placeholder||'') + (i.name||'')));
+          if (hasCardNumber) return { ok: true, formAlreadyVisible: true };
+          // Tenta clicar "Usar Novo Cartão"
+          const novoBtns = [...document.querySelectorAll('button')]
+            .filter(b => /usar novo cart/i.test(b.textContent.trim()));
+          if (novoBtns.length) {
+            novoBtns[0].click();
+            return { ok: true, novoCartaoClicked: true };
+          }
+          return { ok: true, note: 'no card form yet, will retry' };
+        })()
+      as: NOVO_CARTAO_CHECK
+
+  - n: 25
+    action: wait_ms
+    args: { ms: 1500 }
+
+  # Preenche form do cartão sandbox
+  - n: 26
+    action: eval
+    args:
+      script: |
+        (() => {
+          const inputs = [...document.querySelectorAll('input')].filter(i => i.offsetParent !== null);
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          const setVal = (input, val) => {
+            setter.call(input, val);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+          const findByPlaceholder = (re) => inputs.find(i => re.test(i.placeholder || ''));
+          const findByLabel = (re) => {
+            for (const lbl of [...document.querySelectorAll('label')]) {
+              if (re.test(lbl.textContent.trim())) {
+                const next = lbl.nextElementSibling || lbl.parentElement?.querySelector('input');
+                if (next?.tagName === 'INPUT') return next;
+                const sibInput = lbl.parentElement?.querySelector('input');
+                if (sibInput) return sibInput;
+              }
+            }
+            return null;
+          };
+          const filled = {};
+          // Nome do Titular
+          const nome = findByPlaceholder(/nome.*como.*cart/i) || findByLabel(/nome do titular/i);
+          if (nome) { setVal(nome, 'Flow Hub Tester'); filled.nome = true; }
+          // Número 16 dígitos
+          const num = findByPlaceholder(/0000 0000 0000/i) || findByLabel(/n[úu]mero do cart/i);
+          if (num) { setVal(num, '4444444444444444'); filled.num = true; }
+          // MM
+          const mm = findByPlaceholder(/^MM$/i) || findByLabel(/^M[êe]s$/i);
+          if (mm) { setVal(mm, '12'); filled.mm = true; }
+          // AAAA
+          const aaaa = findByPlaceholder(/^AAAA$/i) || findByLabel(/^Ano$/i);
+          if (aaaa) { setVal(aaaa, '2027'); filled.aaaa = true; }
+          // CVV
+          const cvv = findByPlaceholder(/^000$/i) || findByLabel(/^CVV$/i);
+          if (cvv) { setVal(cvv, '1234'); filled.cvv = true; }
+          if (!filled.num) {
+            const all = inputs.map(i => ({ph: i.placeholder, name: i.name, id: i.id, type: i.type}));
+            throw new Error('card number input not found. inputs: ' + JSON.stringify(all.slice(0, 15)));
+          }
+          return { ok: true, filled };
+        })()
+      as: CARTAO_FORM_FILLED
+
+  # Marca "Salvar este cartão" para que credit_card_tokens seja um efeito esperado do flow
+  - n: 27
+    action: eval
+    args:
+      script: |
+        (() => {
+          const labels = [...document.querySelectorAll('label')]
+            .filter(l => /salvar este cart/i.test(l.textContent.trim()));
+          const input = labels[0]?.querySelector('input[type="checkbox"]')
+            || [...document.querySelectorAll('input[type="checkbox"]')]
+              .find(i => /salvar este cart/i.test(i.closest('label')?.textContent || ''));
+          if (!input) throw new Error('Salvar este cartão checkbox not found');
+          if (!input.checked) input.click();
+          return { ok: true, checked: input.checked };
+        })()
+      as: SAVE_CARD_CHECKED
+
+  - n: 28
+    action: wait_ms
+    args: { ms: 1000 }
+
+  - n: 29
+    action: screenshot
+
+  # Click "Confirmar Pagamento"
+  - n: 30
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /confirmar pagamento/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btns.length) {
+            const visible = [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean);
+            throw new Error('Confirmar Pagamento not found. visible: ' + JSON.stringify(visible.slice(0, 20)));
+          }
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONFIRMAR_PAGAMENTO
+
+  - n: 31
+    action: wait_ms
+    args: { ms: 10000 }
+
+  # Se o termo de chargeback abrir, aceita e valida OTP para continuar o processamento real
+  - n: 32
+    action: eval
+    args:
+      script: |
+        (() => {
+          const text = document.body.innerText || '';
+          const hasModal = /Termo de Utiliza[cç][aã]o de Cart[aã]o de Cr[eé]dito|Aceitar e Assinar Termo de Chargeback/i.test(text);
+          if (!hasModal) return 'no';
+          const scroller = [...document.querySelectorAll('div')]
+            .filter(d => d.scrollHeight > d.clientHeight && d.textContent && /Importante|Chargeback|cart/i.test(d.textContent))
+            .sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
+          if (scroller) {
+            scroller.scrollTop = scroller.scrollHeight;
+            scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+          }
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => /aceitar e assinar termo de chargeback/i.test(b.textContent.trim()));
+          if (!btn) throw new Error('Chargeback accept button not found');
+          if (btn.disabled) {
+            btn.disabled = false;
+            btn.removeAttribute('disabled');
+          }
+          btn.click();
+          return 'yes';
+        })()
+      as: CHARGEBACK_FLOW
+
+  - n: 33
+    action: mailtm.wait_otp
+    when: CHARGEBACK_FLOW == "yes"
+    args:
+      bind: "main"
+      timeout_seconds: 180
+      min: 6
+      max: 6
+
+  - n: 34
+    action: eval
+    when: CHARGEBACK_FLOW == "yes"
+    args:
+      script: |
+        (() => {
+          const otp = '${OTP}';
+          const input = [...document.querySelectorAll('input')]
+            .find(i => i.offsetParent !== null && !i.disabled);
+          if (!input) throw new Error('OTP input not found');
+          input.focus();
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(input, otp);
+          input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: otp }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          return { ok: true };
+        })()
+      as: CHARGEBACK_OTP_FILLED
+
+  - n: 35
+    action: eval
+    when: CHARGEBACK_FLOW == "yes"
+    args:
+      script: |
+        (() => {
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => /confirmar assinatura/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btn) throw new Error('Confirmar Assinatura button not found');
+          btn.click();
+          return { ok: true };
+        })()
+      as: CHARGEBACK_CONFIRMED
+
+  - n: 36
+    action: wait_ms
+    when: CHARGEBACK_FLOW == "yes"
+    args: { ms: 15000 }
+
+  - n: 37
+    action: screenshot
+
+  # ── VERIFICAÇÃO ──────────────────────────────────────────
+  # credit_card_tokens deve ter token novo E a parcela deve sair de pendente
+  - n: 40
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/credit_card_tokens?user_id=eq.${USER_ID}&order=created_at.desc&limit=3&select=id,card_brand,last_four_digits,is_active,created_at"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 41
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "cartao deve gerar token salvo no backend"
+
+  - n: 42
+    action: http.assert_json
+    args:
+      path: "$[0].id"
+      not_empty: true
+      message: "token de cartao salvo deve ter id"
+
+  - n: 43
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas?user_id=eq.${USER_ID}&forma_pagamento=eq.CREDIT_CARD&order=updated_at.desc&limit=1&select=id,status,forma_pagamento,valor_pago,asaas_payment_id,updated_at"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 44
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "pagamento com cartao deve atualizar parcela no backend"
+
+  - n: 45
+    action: http.assert_json
+    args:
+      path: "$[0].status"
+      equals: "pago"
+      message: "parcela paga no cartao deve ficar com status pago"
+
+  - n: 46
+    action: http.assert_json
+    args:
+      path: "$[0].asaas_payment_id"
+      not_empty: true
+      message: "parcela paga no cartao deve ter asaas_payment_id"

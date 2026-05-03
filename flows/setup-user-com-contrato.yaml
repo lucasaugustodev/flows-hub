@@ -5,9 +5,9 @@ description: |
   onboarding programaticamente (user_profiles.onboarding_completed=true)
   e faz adesão completa (iniciar → turma → plano → parcelamento → confirmar)
   via API. Resultado: vars USER_EMAIL, USER_ID, USER_JWT, CONTRATO_ID,
-  ADESAO_ID, TURMA_ID, PLANO_ID, LOTE_ID prontos pra outras operações.
+  ADESAO_ID, TURMA_ID, PLANO_ID, LOTE_ID, ASAAS_CUSTOMER_ID prontos pra outras operações.
   Não usa UI — propósito é setup rápido (~3s) pra flows de mudanca-plano,
-  rescisao, replanejamento, transferencia.
+  rescisao, replanejamento, transferencia e pagamentos.
 vars:
   - name: USER_EMAIL
     resolver: mailtm.new
@@ -78,8 +78,84 @@ steps:
     extract:
       USER_JWT: "$.access_token"
 
-  # 4) iniciar adesão
+  # 4) cria customer real no Asaas, igual ao fluxo Contratacao.tsx
   - n: 4
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/functions/v1/asaas-payment-proxy/customers"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+        X-Guarda-Financeira: "HUB_BELO_HORIZONTE"
+      body:
+        name: "Flow Hub Tester"
+        cpfCnpj: "${USER_CPF}"
+        email: "${USER_EMAIL}"
+        phone: "${USER_PHONE}"
+        mobilePhone: "${USER_PHONE}"
+        postalCode: "01310100"
+        address: "Avenida Paulista"
+        addressNumber: "100"
+        complement: ""
+        province: "Bela Vista"
+        city: "São Paulo"
+        state: "SP"
+    expect: { status: 200 }
+    extract:
+      ASAAS_CUSTOMER_ID: "$.id"
+
+  # 5) salva customer_id no perfil como o front faz apos criar o customer
+  - n: 5
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${USER_ID}"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        asaas_customer_id: "${ASAAS_CUSTOMER_ID}"
+    expect: { status: 204 }
+
+  # 6) salva dados de endereco usados por boleto/cartao
+  - n: 6
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/rest/v1/user_contract_data?on_conflict=user_id"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "resolution=merge-duplicates,return=minimal"
+      body:
+        user_id: "${USER_ID}"
+        responsavel_financeiro_tipo: "self"
+        responsavel_nome_completo: null
+        responsavel_cpf: null
+        responsavel_data_nascimento: null
+        responsavel_telefone: null
+        responsavel_genero: null
+        responsavel_email: null
+        endereco_cep: "01310-100"
+        endereco_estado: "SP"
+        endereco_cidade: "São Paulo"
+        endereco_rua: "Avenida Paulista"
+        endereco_bairro: "Bela Vista"
+        endereco_numero: "100"
+        endereco_complemento: ""
+        titular_usa_mesmo_endereco: true
+        titular_endereco_cep: null
+        titular_endereco_estado: null
+        titular_endereco_cidade: null
+        titular_endereco_rua: null
+        titular_endereco_bairro: null
+        titular_endereco_numero: null
+        titular_endereco_complemento: null
+    expect: { status: 201 }
+
+  # 7) iniciar adesão
+  - n: 7
     action: http.request
     args:
       method: POST
@@ -91,8 +167,8 @@ steps:
     extract:
       ADESAO_ID: "$.contratacaoId"
 
-  # 5) selecionar turma
-  - n: 5
+  # 8) selecionar turma
+  - n: 8
     action: http.request
     args:
       method: POST
@@ -105,8 +181,8 @@ steps:
     extract:
       TURMA_ID: "$.turmaId"
 
-  # 6) listar planos da turma
-  - n: 6
+  # 9) listar planos da turma
+  - n: 9
     action: http.request
     args:
       method: GET
@@ -118,8 +194,8 @@ steps:
       PLANO_ID: "$.planos[0].id"
       LOTE_ID: "$.planos[0].loteAtivo.id"
 
-  # 7) selecionar plano
-  - n: 7
+  # 10) selecionar plano
+  - n: 10
     action: http.request
     args:
       method: POST
@@ -130,8 +206,8 @@ steps:
         planoId: "${PLANO_ID}"
     expect: { status: 201 }
 
-  # 8) parcelamento
-  - n: 8
+  # 11) parcelamento
+  - n: 11
     action: http.request
     args:
       method: POST
@@ -144,8 +220,8 @@ steps:
         dataPrimeiraParcela: "2026-06-10"
     expect: { status: 201 }
 
-  # 9) confirmar (cria contrato + gera parcelas via backend NestJS — F1 fix)
-  - n: 9
+  # 12) confirmar (cria contrato + gera parcelas via backend NestJS — F1 fix)
+  - n: 12
     action: http.request
     args:
       method: POST
@@ -159,9 +235,9 @@ steps:
       CONTRATO_ID: "$.contratoId"
       NUMERO_CONTRATO: "$.numeroContrato"
 
-  # 10) WORKAROUND: backend nao seta turma_participantes.status='Ativo' apos confirmar
+  # 13) WORKAROUND: backend nao seta turma_participantes.status='Ativo' apos confirmar
   # frontend filtra por status='Ativo' em useUserTurmas - sem isso /meus-contratos fica vazio
-  - n: 10
+  - n: 13
     action: http.request
     args:
       method: PATCH
