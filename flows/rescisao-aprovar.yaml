@@ -109,6 +109,32 @@ steps:
   - n: 17
     action: screenshot
 
+  # Click no filtro "Aprovadas" — comprova visualmente que a rescissao
+  # apareceu na aba aprovadas (badge count vai de 0 -> 1 com a recém-aprovada)
+  - n: 18
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /^aprovadas\s*\d*$/i.test(b.textContent.trim().replace(/\s+/g, ' ')) && !b.disabled);
+          if (!btns.length) {
+            const tabs = [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => /todas|pendentes|aprovadas|rejeitadas/i.test(t));
+            throw new Error('Aprovadas tab not found. tabs visible: ' + JSON.stringify(tabs));
+          }
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: TAB_APROVADAS_CLICADA
+
+  - n: 19
+    action: wait_ms
+    args: { ms: 2000 }
+
+  - n: 19.1
+    action: screenshot
+
   # ============================================================
   # ETAPA 4 — VERIFICAÇÃO via Supabase
   # ============================================================
