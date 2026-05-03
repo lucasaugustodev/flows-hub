@@ -1258,8 +1258,19 @@ app.post('/api/sessions/:id/save-flow', requireRole('editor'), async (req, res) 
 
 // ----- flows -----
 app.get('/api/flows', (req, res) => {
-  const rows = db.prepare('SELECT id, name, description, created_at, updated_at FROM flows WHERE project_id = ? ORDER BY updated_at DESC').all(req.project.id);
-  res.json({ flows: rows });
+  const rows = db.prepare('SELECT id, name, description, json, created_at, updated_at FROM flows WHERE project_id = ? ORDER BY updated_at DESC').all(req.project.id);
+  // Surface top-level YAML metadata: kind (helper/subflow) and exported vars
+  // so the UI can group reusable sub-flows separately from primary flows.
+  const flows = rows.map(r => {
+    let kind = null, vars = [];
+    try {
+      const j = JSON.parse(r.json);
+      kind = j.kind || null;
+      vars = Array.isArray(j.vars) ? j.vars.map(v => v.name).filter(Boolean) : [];
+    } catch {}
+    return { id: r.id, name: r.name, description: r.description, kind, vars, created_at: r.created_at, updated_at: r.updated_at };
+  });
+  res.json({ flows });
 });
 
 app.get('/api/flows/:id', (req, res) => {

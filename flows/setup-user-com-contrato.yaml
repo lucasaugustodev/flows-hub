@@ -1,4 +1,5 @@
 id: setup-user-com-contrato
+kind: helper
 description: |
   Sub-flow: cria um usuário novo via Supabase Auth admin API, completa
   onboarding programaticamente (user_profiles.onboarding_completed=true)

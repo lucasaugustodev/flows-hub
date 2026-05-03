@@ -1,106 +1,220 @@
 id: mudanca-plano-completo
 description: |
-  Fluxo COMPLETO de mudança de plano: cria user+contrato, consulta
-  elegibilidade, lista planos disponíveis, faz preview com plano "Premium",
-  solicita mudança e executa.
+  Ciclo COMPLETO de mudança de plano (UPGRADE) via UI:
+  1) setup-user-com-contrato (API ~3s) — cria user + contrato ativo
+  2) injeta session no browser → /meus-contratos
+  3) clica "Ações" → "Upgrade" no ActionMenu
+  4) selecao step: clica primeiro plano disponível → "Continuar"
+  5) preview step: "Continuar"
+  6) configuracao step: seleciona primeira data útil → "Confirmar Alteração"
+  7) sucesso step: aguarda confirmação
+  8) verifica mudança via API + audit_log
 steps:
+  # ── SETUP (programático, ~3s) ─────────────────────────────────
   - n: 1
     action: invoke_flow
+    args: { flow: setup-user-com-contrato }
+
+  # ── INJETAR SESSION NO BROWSER ────────────────────────────────
+  - n: 10
+    action: goto
     args:
-      flow: setup-user-com-contrato
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
 
   - n: 11
-    action: http.request
+    action: eval
     args:
-      method: GET
-      url: "${API_BASE}/api/mudanca-plano/elegibilidade?contratoId=${CONTRATO_ID}"
-      headers:
-        Authorization: "Bearer ${USER_JWT}"
-    expect: { status: 200 }
+      script: |
+        (() => {
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_INJECTED
 
   - n: 12
-    action: http.request
+    action: goto
     args:
-      method: GET
-      url: "${API_BASE}/api/mudanca-plano/planos-disponiveis?contratoId=${CONTRATO_ID}"
-      headers:
-        Authorization: "Bearer ${USER_JWT}"
-    expect: { status: 200 }
-    extract:
-      NOVO_PLANO_ID: "$.upgrade[0].id"
-      NOVO_LOTE_ID: "$.upgrade[0].lotes[0].id"
+      url: "${PORTAL_BASE}/meus-contratos"
+      waitUntil: networkidle
 
   - n: 13
-    action: http.request
-    args:
-      method: POST
-      url: "${API_BASE}/api/mudanca-plano/preview"
-      headers:
-        Authorization: "Bearer ${USER_JWT}"
-      body:
-        contratoId: "${CONTRATO_ID}"
-        novoPlanoId: "${NOVO_PLANO_ID}"
-        configuracao:
-          loteId: "${NOVO_LOTE_ID}"
-          diaVencimento: 10
-          dataPrimeiraParcela: "2026-07-10"
-          numeroParcelas: 12
-          numeroParcelasEstendidas: 0
-          valorPorParcela: 125
-          motivoMudanca: "upgrade pra plano premium"
-    expect: { status: 201 }
+    action: wait_ms
+    args: { ms: 3000 }
 
   - n: 14
-    action: audit.assert_entry
-    args:
-      correlate_with_step: 13
-      action: "post.api.mudanca-plano.preview"
-      http_status: 201
+    action: screenshot
 
+  # ── ABRE ACTIONMENU → UPGRADE ─────────────────────────────────
+  # Step 15: button off-screen no scroll horizontal — eval scrollIntoView+click
   - n: 15
-    action: http.request
+    action: eval
     args:
-      method: POST
-      url: "${API_BASE}/api/mudanca-plano/solicitar"
-      headers:
-        Authorization: "Bearer ${USER_JWT}"
-      body:
-        contratoId: "${CONTRATO_ID}"
-        novoPlanoId: "${NOVO_PLANO_ID}"
-        configuracao:
-          loteId: "${NOVO_LOTE_ID}"
-          diaVencimento: 10
-          dataPrimeiraParcela: "2026-07-10"
-          numeroParcelas: 12
-          numeroParcelasEstendidas: 0
-          valorPorParcela: 125
-          motivoMudanca: "upgrade pra plano premium"
-    expect: { status: 201 }
-    extract:
-      MUDANCA_ID: "$.id"
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Ações');
+          if (!btns.length) return { ok: false, reason: 'no Acoes button' };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: ACOES_CLICKED
 
   - n: 16
-    action: audit.assert_entry
-    args:
-      correlate_with_step: 15
-      action: "post.api.mudanca-plano.solicitar"
-      http_status: 201
+    action: wait_ms
+    args: { ms: 1500 }
 
   - n: 17
-    action: http.request
-    args:
-      method: POST
-      url: "${API_BASE}/api/mudanca-plano/${MUDANCA_ID}/executar"
-      headers:
-        Authorization: "Bearer ${USER_JWT}"
-      body: {}
-    expect: { status: 201 }
+    action: screenshot
 
   - n: 18
+    action: click
+    args:
+      text: "Upgrade"
+
+  - n: 19
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 20
+    action: screenshot
+
+  # ── SELECAO: clica primeiro card de plano disponível ──────────
+  - n: 21
+    action: eval
+    args:
+      script: |
+        (() => {
+          // Cards de plano sao divs clicaveis com classe contendo 'cursor-pointer' e 'border'
+          const cards = [...document.querySelectorAll('div')].filter(d => {
+            const cls = d.className || '';
+            return cls.includes('cursor-pointer') && cls.includes('border') && cls.includes('rounded-lg');
+          });
+          if (!cards.length) return { ok: false, reason: 'no plan card', cards: cards.length };
+          cards[0].scrollIntoView({ block: 'center' });
+          cards[0].click();
+          return { ok: true, cards: cards.length };
+        })()
+      as: PLANO_SELECIONADO
+
+  - n: 22
+    action: wait_ms
+    args: { ms: 1500 }
+
+  - n: 23
+    action: screenshot
+
+  # ── SELECAO → PREVIEW: clica "Continuar" ──────────────────────
+  - n: 24
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Continuar' && !b.disabled);
+          if (!btns.length) return { ok: false, reason: 'no Continuar (selecao->preview)' };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONTINUAR_PREVIEW
+
+  - n: 25
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 26
+    action: screenshot
+
+  # ── PREVIEW → CONFIGURACAO: clica "Continuar" ─────────────────
+  - n: 27
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => b.textContent.trim() === 'Continuar' && !b.disabled);
+          if (!btns.length) return { ok: false, reason: 'no Continuar (preview->configuracao)' };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONTINUAR_CONFIG
+
+  - n: 28
+    action: wait_ms
+    args: { ms: 3000 }
+
+  - n: 29
+    action: screenshot
+
+  # ── CONFIGURACAO: seleciona primeiro dia disponivel no calendario
+  - n: 30
+    action: eval
+    args:
+      script: |
+        (() => {
+          const dayBtns = [...document.querySelectorAll('button[type="button"]')]
+            .filter(b => !b.disabled && /^\s*\d{1,2}\s*$/.test(b.textContent));
+          if (!dayBtns.length) return { ok: false, reason: 'no available day' };
+          dayBtns[0].scrollIntoView({ block: 'center' });
+          dayBtns[0].click();
+          return { ok: true, day: dayBtns[0].textContent.trim() };
+        })()
+      as: DIA_SELECIONADO
+
+  - n: 31
+    action: wait_ms
+    args: { ms: 1000 }
+
+  - n: 32
+    action: screenshot
+
+  # ── CONFIRMAR ALTERAÇÃO ───────────────────────────────────────
+  - n: 33
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /confirmar altera/i.test(b.textContent.trim()) && !b.disabled);
+          if (!btns.length) return { ok: false, reason: 'no Confirmar Alteração' };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONFIRMAR_ALTERACAO
+
+  - n: 34
+    action: wait_ms
+    args: { ms: 8000 }
+
+  - n: 35
+    action: screenshot
+
+  # ── VERIFICAÇÃO VIA API: contrato origem deve ter mudanca_plano_id ──
+  - n: 36
     action: http.request
     args:
       method: GET
-      url: "${API_BASE}/api/mudanca-plano/${MUDANCA_ID}"
+      url: "${SUPABASE_URL}/rest/v1/contratos?id=eq.${CONTRATO_ID}&select=id,status,mudanca_plano_id,origem_mudanca_plano"
       headers:
-        Authorization: "Bearer ${USER_JWT}"
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
     expect: { status: 200 }

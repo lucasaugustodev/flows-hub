@@ -6,30 +6,56 @@ export async function renderFlows(slug) {
   try { ({ flows } = await api('/api/flows', {}, { project: slug })); }
   catch (e) { return `<div class="error-banner">${esc(e.message)}</div>`; }
 
-  const rows = flows.map(f => `
+  // Sub-flows / helpers (kind: helper) são reutilizáveis por outros flows via invoke_flow.
+  // Separá-los visualmente para descoberta — o flow principal em si não roda standalone.
+  const helpers = flows.filter(f => f.kind === 'helper' || f.kind === 'subflow');
+  const main = flows.filter(f => !(f.kind === 'helper' || f.kind === 'subflow'));
+
+  const flowRow = (f) => `
     <tr class="clickable" data-href="/p/${slug}/flows/${encodeURIComponent(f.id)}">
       <td><code>${esc(f.id)}</code></td>
       <td>${esc(f.name)}</td>
       <td class="muted">${esc(f.description || '')}</td>
       <td class="muted">${esc(f.updated_at)}</td>
     </tr>
-  `).join('');
+  `;
+
+  const helperRow = (f) => `
+    <tr class="clickable" data-href="/p/${slug}/flows/${encodeURIComponent(f.id)}">
+      <td><code>${esc(f.id)}</code> <span class="badge" style="background:#eef2ff;color:#4338ca">${esc(f.kind || 'helper')}</span></td>
+      <td class="muted">${esc(f.description || '')}</td>
+      <td>${(f.vars || []).map(v => `<code class="text-2" style="font-size:11px;margin-right:4px">${esc(v)}</code>`).join('')}</td>
+    </tr>
+  `;
+
+  const helpersSection = helpers.length === 0 ? '' : `
+    <div class="card">
+      <h3>sub-flows / helpers <span class="text-3 fs-12">(${helpers.length}) — invoque via <code>action: invoke_flow</code></span></h3>
+      <table class="table">
+        <thead><tr><th style="width:280px">id</th><th>description</th><th style="width:40%">vars exportadas</th></tr></thead>
+        <tbody>${helpers.map(helperRow).join('')}</tbody>
+      </table>
+    </div>
+  `;
+
+  const mainSection = main.length === 0 ? `
+    <div class="empty">no flows yet. record one via the CLI: <code>pageflows session new</code> → ... → <code>pageflows save my-flow</code></div>
+  ` : `
+    <table class="table">
+      <thead><tr><th>id</th><th>name</th><th>description</th><th>updated</th></tr></thead>
+      <tbody>${main.map(flowRow).join('')}</tbody>
+    </table>
+  `;
 
   return `
     <div class="page-title">
       <h1>flows</h1>
       <div class="actions">
-        <span class="text-2 fs-12">${flows.length} flow${flows.length !== 1 ? 's' : ''} in <code>${esc(slug)}</code></span>
+        <span class="text-2 fs-12">${flows.length} flow${flows.length !== 1 ? 's' : ''} in <code>${esc(slug)}</code>${helpers.length ? ` (${helpers.length} helper${helpers.length !== 1 ? 's' : ''})` : ''}</span>
       </div>
     </div>
-    ${flows.length === 0 ? `
-      <div class="empty">no flows yet. record one via the CLI: <code>pageflows session new</code> → ... → <code>pageflows save my-flow</code></div>
-    ` : `
-      <table class="table">
-        <thead><tr><th>id</th><th>name</th><th>description</th><th>updated</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `}
+    ${helpersSection}
+    ${mainSection}
   `;
 }
 
