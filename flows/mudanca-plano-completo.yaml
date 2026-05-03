@@ -1,0 +1,106 @@
+id: mudanca-plano-completo
+description: |
+  Fluxo COMPLETO de mudança de plano: cria user+contrato, consulta
+  elegibilidade, lista planos disponíveis, faz preview com plano "Premium",
+  solicita mudança e executa.
+steps:
+  - n: 1
+    action: invoke_flow
+    args:
+      flow: setup-user-com-contrato
+
+  - n: 11
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/mudanca-plano/elegibilidade?contratoId=${CONTRATO_ID}"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+
+  - n: 12
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/mudanca-plano/planos-disponiveis?contratoId=${CONTRATO_ID}"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+    extract:
+      NOVO_PLANO_ID: "$.upgrade[0].id"
+      NOVO_LOTE_ID: "$.upgrade[0].lotes[0].id"
+
+  - n: 13
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/mudanca-plano/preview"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        contratoId: "${CONTRATO_ID}"
+        novoPlanoId: "${NOVO_PLANO_ID}"
+        configuracao:
+          loteId: "${NOVO_LOTE_ID}"
+          diaVencimento: 10
+          dataPrimeiraParcela: "2026-07-10"
+          numeroParcelas: 12
+          numeroParcelasEstendidas: 0
+          valorPorParcela: 125
+          motivoMudanca: "upgrade pra plano premium"
+    expect: { status: 201 }
+
+  - n: 14
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 13
+      action: "post.api.mudanca-plano.preview"
+      http_status: 201
+
+  - n: 15
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/mudanca-plano/solicitar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        contratoId: "${CONTRATO_ID}"
+        novoPlanoId: "${NOVO_PLANO_ID}"
+        configuracao:
+          loteId: "${NOVO_LOTE_ID}"
+          diaVencimento: 10
+          dataPrimeiraParcela: "2026-07-10"
+          numeroParcelas: 12
+          numeroParcelasEstendidas: 0
+          valorPorParcela: 125
+          motivoMudanca: "upgrade pra plano premium"
+    expect: { status: 201 }
+    extract:
+      MUDANCA_ID: "$.id"
+
+  - n: 16
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 15
+      action: "post.api.mudanca-plano.solicitar"
+      http_status: 201
+
+  - n: 17
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/mudanca-plano/${MUDANCA_ID}/executar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body: {}
+    expect: { status: 201 }
+
+  - n: 18
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/mudanca-plano/${MUDANCA_ID}"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }

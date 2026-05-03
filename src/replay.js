@@ -31,6 +31,7 @@ const { auditAssertEntry } = require('./actions/audit');
 const { createClient } = require('@supabase/supabase-js');
 const { Pool } = require('pg');
 const { dbRead } = require('./actions/db');
+const { waitOtp: mailtmWaitOtp } = require('./actions/mailtm');
 const { recordHttpCall, recordAuditEntry } = require('./db');
 const linter = require('./linter');
 
@@ -48,6 +49,8 @@ const HANDLERS = {
   'jwt.sign': jwtSign,
   'audit.assert_entry': auditAssertEntry,
   'db.read': dbRead,
+  'mailtm.wait_otp': mailtmWaitOtp,
+  noop: async () => ({ ok: true }),
 };
 
 /**
@@ -184,16 +187,21 @@ async function runFlow(flowId, env) {
       const handler = HANDLERS[step.action];
       if (!handler) throw new Error(`unknown action: ${step.action}`);
 
+      // Browser HTTP tap: marca step atual para que requests do SPA sejam
+      // atribuídas ao step UI vigente (e tenham X-Trace-Id correto).
+      if (typeof session?.setStepN === 'function') session.setStepN(step.n);
+
       // Linter: snapshot page + attach listeners before the action runs
       const linterCtx = await linter.beforeStep(session, step).catch(() => null);
 
       let result;
       try {
         // http.*, jwt.*, audit.*, and db.* actions receive a shared ctx object (persisted per run for lastHttpResult)
-        if (step.action.startsWith('http.') || step.action.startsWith('jwt.') || step.action.startsWith('audit.') || step.action === 'db.read') {
+        if (step.action.startsWith('http.') || step.action.startsWith('jwt.') || step.action.startsWith('audit.') || step.action === 'db.read' || step.action.startsWith('mailtm.')) {
           httpCtx.stepN = step.n;
-          // jwt.* needs vars (for store_as write-back and SUPABASE_JWT_SECRET lookup)
+          // jwt.* needs vars; mailtm.* needs the inboxes bound by mailtm.new resolver
           httpCtx.vars = vars;
+          httpCtx.mailtmInstances = ctx.mailtmInstances;
           result = await handler(httpCtx, args);
         } else {
           result = await handler(session, args);
@@ -336,6 +344,98 @@ async function executeReplay(flowId, overrides = {}, onEvent = null, meta = {}) 
   const page = await browserCtx.newPage();
   page.setDefaultTimeout(30000);
 
+  // ============================================================
+  // BROWSER HTTP TAP — captura automática de chamadas pro API_BASE
+  // feitas pelo SPA durante steps de UI (click, fill, goto, etc).
+  // Cada call é gravada em http_calls com o step_n vigente no
+  // momento da resposta, e correlaciona com audit_log via X-Trace-Id
+  // injetado por monkey-patch no fetch/XHR.
+  // ============================================================
+  const apiBaseForTap = vars.API_BASE || '';
+  let currentStepN = null;
+
+  if (apiBaseForTap) {
+    const injectScript = `
+      (function() {
+        if (window.__flowsHubInjected) return;
+        window.__flowsHubInjected = true;
+        const API_BASE = ${JSON.stringify(apiBaseForTap)};
+        const origFetch = window.fetch;
+        window.fetch = function(input, init) {
+          init = init || {};
+          let url = typeof input === 'string' ? input : (input && input.url) || '';
+          if (url && url.indexOf(API_BASE) === 0) {
+            const headers = new Headers(init.headers || (typeof input === 'object' && input.headers) || {});
+            const tid = window.__flowsHubTraceId || '';
+            if (tid && !headers.has('X-Trace-Id')) headers.set('X-Trace-Id', tid);
+            init.headers = headers;
+          }
+          return origFetch.call(this, input, init);
+        };
+        const OrigXHR = window.XMLHttpRequest;
+        function PatchedXHR() {
+          const xhr = new OrigXHR();
+          const origOpen = xhr.open;
+          xhr.open = function(method, url) {
+            this.__fh_url = url;
+            return origOpen.apply(this, arguments);
+          };
+          const origSend = xhr.send;
+          xhr.send = function(body) {
+            if (this.__fh_url && this.__fh_url.indexOf(API_BASE) === 0) {
+              const tid = window.__flowsHubTraceId || '';
+              if (tid) try { this.setRequestHeader('X-Trace-Id', tid); } catch(e) {}
+            }
+            return origSend.call(this, body);
+          };
+          return xhr;
+        }
+        PatchedXHR.prototype = OrigXHR.prototype;
+        window.XMLHttpRequest = PatchedXHR;
+      })();
+    `;
+    try { await browserCtx.addInitScript({ content: injectScript }); } catch {}
+
+    const requestData = new Map();
+    page.on('request', (request) => {
+      const url = request.url();
+      if (url.indexOf(apiBaseForTap) === 0) {
+        requestData.set(request, {
+          method: request.method(),
+          url,
+          headers: request.headers(),
+          body: request.postData() || null,
+          startedAt: Date.now(),
+          stepN: currentStepN,
+        });
+      }
+    });
+    page.on('response', async (response) => {
+      const request = response.request();
+      const meta = requestData.get(request);
+      if (!meta) return;
+      requestData.delete(request);
+      let body = null;
+      try { body = await response.text(); } catch {}
+      try {
+        recordHttpCall({
+          run_id: runId,
+          step_n: meta.stepN,
+          trace_id: meta.headers['x-trace-id'] || null,
+          method: meta.method,
+          url: meta.url,
+          request_headers: JSON.stringify(meta.headers),
+          request_body: meta.body,
+          response_status: response.status(),
+          response_headers: JSON.stringify(response.headers()),
+          response_body: body,
+          latency_ms: Date.now() - meta.startedAt,
+          error: null,
+        });
+      } catch {}
+    });
+  }
+
   const session = {
     id: runId,
     page,
@@ -344,6 +444,11 @@ async function executeReplay(flowId, overrides = {}, onEvent = null, meta = {}) 
     screenshotsDir: path.join(runDir, 'screenshots'),
     events: [],
     eventsPath: path.join(runDir, 'events.jsonl'),
+    setStepN: (n) => {
+      currentStepN = n;
+      // injeta trace_id no SPA pra próximas chamadas — sobrevive a SPA navigations
+      page.evaluate((tid) => { window.__flowsHubTraceId = tid; }, `${runId}:${n}:browser`).catch(() => {});
+    },
   };
 
   const allAssertions = [];
@@ -361,34 +466,77 @@ async function executeReplay(flowId, overrides = {}, onEvent = null, meta = {}) 
   } catch (e) {
     status = 'failed';
     error = e.message;
-  } finally {
-    try { await httpCtx.pg?.end?.(); } catch {}
-    try {
-      // Apply project suppression rules to findings before persisting. Auto-triage
-      // rows go into finding_triage; matched findings show up dimmed in the viewer.
-      if (meta?.projectId) {
-        try {
-          const rules = require('./rules');
-          const allFindings = [];
-          for (const s of stepLog) for (const f of (s.findings || [])) allFindings.push(f);
-          if (allFindings.length > 0) {
-            const matched = rules.applyRules(allFindings, meta.projectId);
-            if (matched > 0) emit('rules_applied', { matched });
-          }
-        } catch (e) {
-          // Rule failure should never crash the run save
-          // eslint-disable-next-line no-console
-          console.warn('[replay] suppression rules failed:', e.message);
-        }
-      }
-      db.prepare(`UPDATE runs SET status = ?, finished_at = CURRENT_TIMESTAMP, result_json = ?, error = ? WHERE id = ?`)
-        .run(status, JSON.stringify({ steps: stepLog, vars: redactSecrets(vars), assertions: allAssertions }), error, runId);
-    } catch {}
-    try { await browserCtx.close(); } catch {}
-    try { await browser.close(); } catch {}
-    for (const fn of (ctx.cleanup || []).reverse()) try { await fn(); } catch {}
-    emit('run_end', { runId, status, error });
   }
+
+  // ============================================================
+  // SWEEP: traz audit_log do Supabase pras audit_entries do flows-hub
+  // pra TODOS os trace_ids do tipo "runId:N" e "runId:N:browser",
+  // capturando entries das chamadas browser que não foram explicitamente
+  // assertadas via audit.assert_entry.
+  // ============================================================
+  if (httpCtx.supabase) {
+    try {
+      const { data: auditRows } = await httpCtx.supabase
+        .from('audit_log')
+        .select('id, trace_id, action, http_status, status, latency_ms, user_id, created_at')
+        .like('trace_id', `${runId}:%`)
+        .order('id', { ascending: true });
+      if (auditRows && auditRows.length > 0) {
+        const existing = db.prepare(
+          `SELECT audit_log_id FROM audit_entries WHERE run_id = ? AND audit_log_id IS NOT NULL`
+        ).all(runId);
+        const seen = new Set(existing.map(r => r.audit_log_id));
+        let added = 0;
+        for (const row of auditRows) {
+          if (seen.has(row.id)) continue;
+          const m = String(row.trace_id || '').match(/^[a-f0-9]+:(\d+)/);
+          const stepN = m ? parseInt(m[1], 10) : 0;
+          try {
+            recordAuditEntry({
+              run_id: runId,
+              step_n: stepN,
+              trace_id: row.trace_id,
+              audit_log_id: row.id,
+              action: row.action,
+              http_status: row.http_status,
+              status: row.status,
+              latency_ms: row.latency_ms,
+              user_id: row.user_id,
+              raw_json: JSON.stringify(row),
+            });
+            added++;
+          } catch {}
+        }
+        if (added > 0) emit('audit_swept', { added, total: auditRows.length });
+      }
+    } catch (e) {
+      console.warn(`[replay] audit sweep failed: ${e.message}`);
+    }
+  }
+
+  // ===== cleanup + persist =====
+  try { await httpCtx.pg?.end?.(); } catch {}
+  try {
+    if (meta?.projectId) {
+      try {
+        const rules = require('./rules');
+        const allFindings = [];
+        for (const s of stepLog) for (const f of (s.findings || [])) allFindings.push(f);
+        if (allFindings.length > 0) {
+          const matched = rules.applyRules(allFindings, meta.projectId);
+          if (matched > 0) emit('rules_applied', { matched });
+        }
+      } catch (e) {
+        console.warn('[replay] suppression rules failed:', e.message);
+      }
+    }
+    db.prepare(`UPDATE runs SET status = ?, finished_at = CURRENT_TIMESTAMP, result_json = ?, error = ? WHERE id = ?`)
+      .run(status, JSON.stringify({ steps: stepLog, vars: redactSecrets(vars), assertions: allAssertions }), error, runId);
+  } catch {}
+  try { await browserCtx.close(); } catch {}
+  try { await browser.close(); } catch {}
+  for (const fn of (ctx.cleanup || []).reverse()) try { await fn(); } catch {}
+  emit('run_end', { runId, status, error });
 
   return { runId, status, error, steps: stepLog };
 }

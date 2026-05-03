@@ -29,6 +29,188 @@ const DATA_DIR = process.env.DATA_DIR || './data';
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
+// ===== test accounts page =====
+const TEST_ACCOUNTS_FILE = path.join(DATA_DIR, 'test-accounts.json');
+function loadTestAccounts() {
+  try { return JSON.parse(fs.readFileSync(TEST_ACCOUNTS_FILE, 'utf8')); } catch { return []; }
+}
+function saveTestAccounts(accounts) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(TEST_ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
+}
+
+app.get('/test-accounts', (_req, res) => {
+  const accounts = loadTestAccounts();
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contas de Teste — Hub Portal v2</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; }
+    .header { background: #1e293b; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+    .header h1 { font-size: 18px; font-weight: 600; }
+    .header a { color: #94a3b8; font-size: 13px; text-decoration: none; margin-left: auto; }
+    .header a:hover { color: white; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+    .card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); overflow: hidden; }
+    .card-header { padding: 16px 20px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; }
+    .card-header h2 { font-size: 15px; font-weight: 600; color: #334155; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f8fafc; padding: 10px 16px; text-align: left; font-weight: 600; color: #64748b; border-bottom: 1px solid #e2e8f0; }
+    td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafafa; }
+    .badge { display: inline-block; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 500; margin: 2px 2px 2px 0; }
+    .badge.green { background: #dcfce7; color: #15803d; }
+    .badge.orange { background: #ffedd5; color: #c2410c; }
+    .btn { padding: 7px 14px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; border: none; transition: background .15s; }
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-danger { background: #fee2e2; color: #dc2626; }
+    .btn-danger:hover { background: #fecaca; }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; padding: 16px 20px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 150px; }
+    .form-group label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: .03em; }
+    input, textarea { padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; font-family: inherit; }
+    input:focus, textarea:focus { outline: 2px solid #3b82f6; border-color: transparent; }
+    textarea { resize: vertical; min-height: 60px; }
+    .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; }
+    .empty { padding: 40px; text-align: center; color: #94a3b8; }
+    .date { color: #94a3b8; font-size: 11px; }
+    .actions { display: flex; gap: 6px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span>🧪</span>
+    <h1>Contas de Teste — Hub Portal v2</h1>
+    <a href="/app/">← Voltar ao flows-hub</a>
+  </div>
+  <div class="container">
+    <div class="card">
+      <div class="card-header">
+        <h2>Contas cadastradas (${accounts.length})</h2>
+      </div>
+      <div class="form-row" id="add-form">
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="f-email" placeholder="user@exemplo.com">
+        </div>
+        <div class="form-group" style="max-width:180px">
+          <label>Senha</label>
+          <input type="text" id="f-senha" placeholder="Senha@2026!">
+        </div>
+        <div class="form-group" style="max-width:200px">
+          <label>Contrato ID</label>
+          <input type="text" id="f-contrato" placeholder="uuid ou —">
+        </div>
+        <div class="form-group" style="flex:2">
+          <label>Casos de uso</label>
+          <input type="text" id="f-casos" placeholder="adesão completa, rescisão...">
+        </div>
+        <div class="form-group" style="max-width:100px">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" onclick="addAccount()">+ Adicionar</button>
+        </div>
+      </div>
+      <table id="accounts-table">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Senha</th>
+            <th>Contrato ID</th>
+            <th>Casos de uso</th>
+            <th>Criado em</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          ${accounts.length === 0
+            ? '<tr><td colspan="6" class="empty">Nenhuma conta cadastrada ainda.</td></tr>'
+            : accounts.map(a => `
+          <tr data-id="${a.id}">
+            <td class="mono">${a.email}</td>
+            <td class="mono">${a.senha}</td>
+            <td class="mono" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${a.contratoId || '—'}</td>
+            <td>${(a.casos || []).map(c => `<span class="badge">${c}</span>`).join('')}</td>
+            <td class="date">${new Date(a.createdAt).toLocaleDateString('pt-BR')}</td>
+            <td class="actions">
+              <button class="btn btn-danger btn-sm" onclick="deleteAccount('${a.id}')">Remover</button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script>
+    async function addAccount() {
+      const email = document.getElementById('f-email').value.trim();
+      const senha = document.getElementById('f-senha').value.trim();
+      const contratoId = document.getElementById('f-contrato').value.trim();
+      const casosRaw = document.getElementById('f-casos').value.trim();
+      if (!email || !senha) { alert('Email e senha são obrigatórios'); return; }
+      const casos = casosRaw ? casosRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const res = await fetch('/api/test-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, senha, contratoId, casos })
+      });
+      if (res.ok) location.reload();
+      else alert('Erro ao adicionar conta');
+    }
+    async function deleteAccount(id) {
+      if (!confirm('Remover esta conta?')) return;
+      const res = await fetch('/api/test-accounts/' + id, { method: 'DELETE' });
+      if (res.ok) location.reload();
+      else alert('Erro ao remover conta');
+    }
+  </script>
+</body>
+</html>`);
+});
+
+app.get('/api/test-accounts', (_req, res) => {
+  res.json(loadTestAccounts());
+});
+
+app.post('/api/test-accounts', (req, res) => {
+  const { email, senha, contratoId, casos } = req.body || {};
+  if (!email || !senha) return res.status(400).json({ error: 'email e senha obrigatórios' });
+  const accounts = loadTestAccounts();
+  const account = {
+    id: crypto.randomUUID(),
+    email,
+    senha,
+    contratoId: contratoId || null,
+    casos: Array.isArray(casos) ? casos : [],
+    createdAt: new Date().toISOString(),
+  };
+  accounts.push(account);
+  saveTestAccounts(accounts);
+  res.status(201).json(account);
+});
+
+app.put('/api/test-accounts/:id', (req, res) => {
+  const accounts = loadTestAccounts();
+  const idx = accounts.findIndex(a => a.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  accounts[idx] = { ...accounts[idx], ...req.body, id: req.params.id };
+  saveTestAccounts(accounts);
+  res.json(accounts[idx]);
+});
+
+app.delete('/api/test-accounts/:id', (req, res) => {
+  const accounts = loadTestAccounts();
+  const filtered = accounts.filter(a => a.id !== req.params.id);
+  if (filtered.length === accounts.length) return res.status(404).json({ error: 'not found' });
+  saveTestAccounts(filtered);
+  res.json({ ok: true });
+});
+
 // ===== public =====
 app.get('/health', (_req, res) => {
   const active = [...db.prepare('SELECT COUNT(*) c FROM sessions WHERE status = ?').iterate('active')][0]?.c || 0;
@@ -416,6 +598,57 @@ app.get('/runs/:id', (req, res) => {
   const sevCount = { high: 0, medium: 0, low: 0 };
   for (const f of allFindings) sevCount[f.severity] = (sevCount[f.severity] || 0) + 1;
 
+  // Pre-fetch http_calls + audit_entries para esta run, agrupados por step_n
+  const httpCallsByStep = {};
+  const auditEntriesByStep = {};
+  try {
+    const calls = db.prepare(
+      `SELECT id, step_n, method, url, response_status, latency_ms, error,
+              request_headers, request_body, response_headers, response_body, trace_id
+       FROM http_calls WHERE run_id = ? ORDER BY id ASC`
+    ).all(req.params.id);
+    for (const c of calls) {
+      const k = String(c.step_n);
+      (httpCallsByStep[k] = httpCallsByStep[k] || []).push(c);
+    }
+    const audits = db.prepare(
+      `SELECT id, step_n, trace_id, action, http_status, status, latency_ms, user_id, raw_json
+       FROM audit_entries WHERE run_id = ? ORDER BY id ASC`
+    ).all(req.params.id);
+    for (const a of audits) {
+      const k = String(a.step_n);
+      (auditEntriesByStep[k] = auditEntriesByStep[k] || []).push(a);
+    }
+  } catch {}
+
+  // Helpers para expandir detalhes (com redaction de auth)
+  const redactHeaders = (raw) => {
+    if (!raw) return '';
+    let obj;
+    try { obj = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return String(raw); }
+    if (obj && typeof obj === 'object') {
+      const out = {};
+      for (const [k, v] of Object.entries(obj)) {
+        out[k] = /^(authorization|apikey|x-api-key|cookie|x-trace-id)$/i.test(k)
+          ? (typeof v === 'string' ? v.slice(0, 16) + '…<redacted>' : '<redacted>')
+          : v;
+      }
+      return JSON.stringify(out, null, 2);
+    }
+    return String(raw);
+  };
+  const formatBody = (raw) => {
+    if (raw == null || raw === '') return '<empty>';
+    const s = String(raw);
+    try {
+      const parsed = JSON.parse(s);
+      const pretty = JSON.stringify(parsed, null, 2);
+      return pretty.length > 8000 ? pretty.slice(0, 8000) + '\n…(truncated)' : pretty;
+    } catch {
+      return s.length > 4000 ? s.slice(0, 4000) + '\n…(truncated)' : s;
+    }
+  };
+
   const findingsSummaryHtml = allFindings.length === 0 ? '' : `
     <div class="findings-summary">
       <span class="summary-label">findings:</span>
@@ -461,9 +694,52 @@ app.get('/runs/:id', (req, res) => {
       </div>
     `;
 
+    // Inline render http_calls + audit_entries do step
+    const stepKey = String(s.n);
+    const calls = httpCallsByStep[stepKey] || [];
+    const audits = auditEntriesByStep[stepKey] || [];
+    const httpHtml = calls.length === 0 ? '' : calls.map(c => {
+      const status = c.response_status;
+      const klass = status >= 200 && status < 300 ? 'ok' : status >= 400 ? 'fail' : 'warn';
+      const shortUrl = (c.url || '').replace(/^https?:\/\/[^/]+/, '');
+      return `<details class="http-call http-${klass}">
+        <summary>
+          <span class="hc-method">${escapeHtml(c.method)}</span>
+          <code class="hc-url">${escapeHtml(shortUrl)}</code>
+          <span class="hc-status hc-${klass}">${escapeHtml(String(status ?? '—'))}</span>
+          <span class="hc-lat">${c.latency_ms}ms</span>
+          ${c.error ? `<span class="hc-err">${escapeHtml(c.error)}</span>` : ''}
+        </summary>
+        <div class="hc-body">
+          <div class="hc-section"><b>request URL</b><pre>${escapeHtml(c.url || '')}</pre></div>
+          ${c.trace_id ? `<div class="hc-section"><b>trace_id</b><pre>${escapeHtml(c.trace_id)}</pre></div>` : ''}
+          <div class="hc-section"><b>request headers</b><pre>${escapeHtml(redactHeaders(c.request_headers))}</pre></div>
+          <div class="hc-section"><b>request body</b><pre>${escapeHtml(formatBody(c.request_body))}</pre></div>
+          <div class="hc-section"><b>response headers</b><pre>${escapeHtml(redactHeaders(c.response_headers))}</pre></div>
+          <div class="hc-section"><b>response body</b><pre>${escapeHtml(formatBody(c.response_body))}</pre></div>
+        </div>
+      </details>`;
+    }).join('');
+    const auditHtml = audits.length === 0 ? '' : audits.map(a => {
+      const klass = a.status === 'success' ? 'ok' : 'fail';
+      return `<details class="audit-entry audit-${klass}">
+        <summary>
+          <span class="ae-arrow">↳ audit</span>
+          <code class="ae-action">${escapeHtml(a.action || '')}</code>
+          <span class="ae-status ae-${klass}">${escapeHtml(String(a.http_status ?? '—'))}</span>
+          <span class="ae-lat">${a.latency_ms}ms</span>
+          ${a.user_id ? `<span class="ae-user">user <code>${escapeHtml(String(a.user_id).slice(0, 8))}</code></span>` : ''}
+        </summary>
+        <div class="ae-body">
+          <div class="hc-section"><b>trace_id</b><pre>${escapeHtml(a.trace_id || '')}</pre></div>
+          <div class="hc-section"><b>audit_log row</b><pre>${escapeHtml(formatBody(a.raw_json))}</pre></div>
+        </div>
+      </details>`;
+    }).join('');
+
     return `<div class="step ${s.ok ? 'ok' : 'fail'}" style="${sevBorder}">
       <div class="hd"><b>${okIcon} ${s.n}. ${escapeHtml(s.action)}</b><span class="dur">${s.durationMs}ms</span></div>
-      ${valueLine}${err}${findingsHtml}${shot}
+      ${valueLine}${err}${httpHtml}${auditHtml}${findingsHtml}${shot}
     </div>`;
   }).join('');
 
@@ -512,6 +788,29 @@ app.get('/runs/:id', (req, res) => {
   .fmsg{color:#e5e7eb;line-height:1.4}
   .triage-badge{font-size:10px;padding:1px 8px;border-radius:3px;font-weight:600;text-transform:uppercase;letter-spacing:0.03em}
   .triage-bug{background:rgba(239,68,68,0.15);color:#ef4444}
+
+  .http-call,.audit-entry{font-family:ui-monospace,monospace;font-size:12px;background:#0d0d12;border-radius:4px;margin-top:4px;border-left:3px solid #3b82f6}
+  .audit-entry{margin-left:18px;border-left:2px dashed #6b7280;background:#0a0a0d}
+  .http-call > summary,.audit-entry > summary{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 10px;cursor:pointer;list-style:none;outline:none}
+  .http-call > summary::-webkit-details-marker,.audit-entry > summary::-webkit-details-marker{display:none}
+  .http-call > summary::before,.audit-entry > summary::before{content:'▸';color:#6b7280;font-size:10px;margin-right:2px;transition:transform 0.15s}
+  .http-call[open] > summary::before,.audit-entry[open] > summary::before{transform:rotate(90deg)}
+  .http-call > summary:hover,.audit-entry > summary:hover{background:#15151b}
+  .hc-method{font-weight:700;color:#60a5fa;min-width:46px}
+  .hc-url{color:#e5e7eb;background:transparent;padding:0;flex:1;min-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hc-status,.ae-status{padding:1px 7px;border-radius:3px;font-weight:600}
+  .hc-ok,.ae-ok{background:rgba(16,185,129,0.18);color:#10b981}
+  .hc-fail,.ae-fail{background:rgba(239,68,68,0.18);color:#ef4444}
+  .hc-warn{background:rgba(245,158,11,0.18);color:#f59e0b}
+  .hc-lat,.ae-lat{color:#9ca3af;font-size:11px}
+  .hc-err{color:#fca5a5;font-size:11px}
+  .ae-arrow{color:#6b7280;font-size:11px}
+  .ae-action{color:#a5b4fc;background:transparent;padding:0}
+  .ae-user{color:#9ca3af;font-size:11px}
+  .hc-body,.ae-body{padding:8px 14px 12px;border-top:1px solid #1f1f25}
+  .hc-section{margin:8px 0}
+  .hc-section > b{display:block;font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px;font-weight:600}
+  .hc-section > pre{margin:0;background:#070709;border:1px solid #1f1f25;padding:8px 10px;font-size:11px;line-height:1.5;max-height:400px;overflow:auto}
   .triage-not_a_bug{background:rgba(107,114,128,0.2);color:#9ca3af}
   .triage-investigating{background:rgba(245,158,11,0.15);color:#f59e0b}
   .triage-accepted_risk{background:rgba(167,139,250,0.15);color:#a78bfa}

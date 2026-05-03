@@ -1,0 +1,183 @@
+id: rescisao-completo
+description: |
+  Ciclo COMPLETO de rescisão via UI:
+  1) setup-user-com-contrato (API ~3s) — cria user + contrato ativo
+  2) injeta session no browser → /meus-contratos
+  3) clica "Ações" → "Rescisão" no ActionMenu
+  4) reason step: seleciona "financeiros" → "Continuar"
+  5) options step: "Seguir com a rescisão"
+  6) transfer step: "Não quero transferir"
+  7) info step: "Entendi e quero continuar"
+  8) confirmation step: aguarda cálculo → "Confirmar rescisão"
+  9) verifica rescisão no historico via API + audit_log
+steps:
+  # ── SETUP (programático, ~3s) ─────────────────────────────────
+  - n: 1
+    action: invoke_flow
+    args: { flow: setup-user-com-contrato }
+
+  # ── INJETAR SESSION NO BROWSER ────────────────────────────────
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_INJECTED
+
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/meus-contratos"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 3000 }
+
+  - n: 14
+    action: screenshot
+
+  # ── ABRE ACTIONMENU → RESCISÃO ────────────────────────────────
+  - n: 15
+    action: click
+    args:
+      text: "Ações"
+
+  - n: 16
+    action: wait_ms
+    args: { ms: 800 }
+
+  - n: 17
+    action: screenshot
+
+  - n: 18
+    action: click
+    args:
+      text: "Rescisão"
+
+  - n: 19
+    action: wait_ms
+    args: { ms: 1200 }
+
+  - n: 20
+    action: screenshot
+
+  # ── REASON STEP: seleciona motivo via React-friendly setter ───
+  - n: 21
+    action: eval
+    args:
+      script: |
+        (() => {
+          const sel = document.querySelector('select');
+          if (!sel) return { ok: false, reason: 'select not found' };
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+          setter.call(sel, 'financeiros');
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          return { ok: true, value: sel.value };
+        })()
+      as: MOTIVO_SET
+
+  - n: 22
+    action: wait_ms
+    args: { ms: 500 }
+
+  - n: 23
+    action: click
+    args:
+      text: "Continuar"
+
+  - n: 24
+    action: wait_ms
+    args: { ms: 800 }
+
+  - n: 25
+    action: screenshot
+
+  # ── OPTIONS STEP: seguir com a rescisão ───────────────────────
+  - n: 26
+    action: click
+    args:
+      text: "Seguir com a rescisão"
+
+  - n: 27
+    action: wait_ms
+    args: { ms: 800 }
+
+  # ── TRANSFER STEP: não quero transferir ───────────────────────
+  - n: 28
+    action: click
+    args:
+      text: "Não quero transferir"
+
+  - n: 29
+    action: wait_ms
+    args: { ms: 800 }
+
+  # ── INFO STEP: entendi e quero continuar ──────────────────────
+  - n: 30
+    action: click
+    args:
+      text: "Entendi e quero continuar"
+
+  # Aguarda cálculo carregar (useEffect dispara fetch ao entrar no step confirmation)
+  - n: 31
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 32
+    action: screenshot
+
+  # ── CONFIRMATION STEP: confirmar rescisão ─────────────────────
+  - n: 33
+    action: click
+    args:
+      text: "Confirmar rescisão"
+
+  - n: 34
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 35
+    action: screenshot
+
+  # ── VERIFICAÇÃO VIA API ───────────────────────────────────────
+  - n: 36
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/rescisao/historico?contratoId=${CONTRATO_ID}"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+
+  - n: 37
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 36
+      action: "get.api.rescisao.historico"
+      http_status: 200

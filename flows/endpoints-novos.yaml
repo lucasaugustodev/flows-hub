@@ -1,0 +1,79 @@
+id: endpoints-novos
+description: |
+  Smoke tests dos endpoints novos criados em F5+F8: wallet/recarga,
+  turma-participantes/entrar, turma-depositos, contrato-lock, admin/eventos,
+  admin/itens. Cobre o fluxo CRUD básico de cada módulo novo.
+steps:
+  - n: 1
+    action: invoke_flow
+    args:
+      flow: setup-user-com-contrato
+
+  # turma-participantes — entry idempotente
+  - n: 11
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/turma-participantes/entrar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        turmaId: "${TURMA_ID}"
+    expect: { status: 201 }
+
+  # turma-depositos — criar depósito
+  - n: 12
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/turma-depositos"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        turmaId: "${TURMA_ID}"
+        valor: 50
+        observacao: "depósito flows-hub e2e"
+    expect: { status: 201 }
+    extract:
+      DEPOSITO_ID: "$.deposito.id"
+
+  - n: 13
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/turma-depositos/${DEPOSITO_ID}/confirmar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body: {}
+    expect: { status: 201 }
+
+  # contrato-lock — lock + status + release
+  - n: 14
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/contrato-lock/${CONTRATO_ID}/lock"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        motivo: "edição via flows-hub"
+    expect: { status: 201 }
+
+  - n: 15
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/contrato-lock/${CONTRATO_ID}/status"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+
+  - n: 16
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/contrato-lock/${CONTRATO_ID}/release"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body: {}
+    expect: { status: 201 }

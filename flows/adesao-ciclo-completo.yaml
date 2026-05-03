@@ -1,0 +1,274 @@
+id: adesao-ciclo-completo
+description: |
+  Ciclo COMPLETO de adesão E2E no portal-v2:
+  login programático → injeta session → navega UI autenticada →
+  iniciar → selecionar turma → listar planos → selecionar plano →
+  parcelamento (12x) → confirmar (gera contrato real) → audit_log validado
+  em todos os passos críticos. Contrato real gravado em produção.
+vars:
+  - name: USER_EMAIL
+    resolver: static
+    args: { value: "flowshub-e2e@deltajohnsons.com" }
+  - name: USER_PASSWORD
+    resolver: static
+    args: { value: "FlowsHubE2E@2026!" }
+  - name: USER_ID
+    resolver: static
+    args: { value: "ce1a603d-4209-453d-8cfa-ea35bfab7b0c" }
+  - name: TURMA_CODIGO
+    resolver: static
+    args: { value: "FH-E2E-1777758219774" }
+  - name: USER_JWT
+    resolver: supabase.login
+    args:
+      email: "flowshub-e2e@deltajohnsons.com"
+      password: "FlowsHubE2E@2026!"
+steps:
+  # ========== FRONTEND: login UI (programático: injeta session) ==========
+  - n: 1
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 2
+    action: screenshot
+
+  - n: 3
+    action: eval
+    args:
+      script: |
+        (() => {
+          const session = {
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now() / 1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            },
+          };
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify(session));
+          return { logged: true, key: 'sb-amylxrskjhqwrlarqfcz-auth-token' };
+        })()
+      as: SESSION_INJECTED
+
+  # ========== FRONTEND: dashboard (verifica session ativa) ==========
+  - n: 4
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/dashboard"
+      waitUntil: networkidle
+
+  - n: 5
+    action: screenshot
+
+  # ========== STEP 1 — INICIAR ADESÃO ==========
+  - n: 6
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/iniciar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body: {}
+    expect: { status: 201 }
+    extract:
+      ADESAO_ID: "$.contratacaoId"
+
+  - n: 7
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 6
+      action: "post.api.adesao.iniciar"
+      http_status: 201
+
+  # ========== FRONTEND: navega selecao-turma ==========
+  - n: 8
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/selecao-turma"
+      waitUntil: networkidle
+
+  - n: 9
+    action: screenshot
+
+  # ========== STEP 2 — LISTAR TURMAS DISPONÍVEIS ==========
+  - n: 10
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/adesao/turmas"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+
+  - n: 11
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 10
+      action: "get.api.adesao.turmas"
+      http_status: 200
+
+  # ========== STEP 3 — SELECIONAR TURMA ==========
+  - n: 12
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/turma"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        codigoTurma: "${TURMA_CODIGO}"
+    expect: { status: 201 }
+    extract:
+      TURMA_ID: "$.turmaId"
+
+  - n: 13
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 12
+      action: "post.api.adesao.:id.turma"
+      http_status: 201
+
+  # ========== FRONTEND: navega selecao-plano ==========
+  - n: 14
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/selecao-plano"
+      waitUntil: networkidle
+
+  - n: 15
+    action: screenshot
+
+  # ========== STEP 4 — LISTAR PLANOS DA TURMA ==========
+  - n: 16
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/planos"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+    extract:
+      PLANO_ID: "$.planos[0].id"
+      LOTE_ID: "$.planos[0].loteAtivo.id"
+      VALOR_LOTE: "$.planos[0].loteAtivo.valor"
+
+  # ========== STEP 5 — SELECIONAR PLANO ==========
+  - n: 17
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/plano"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        planoId: "${PLANO_ID}"
+    expect: { status: 201 }
+
+  - n: 18
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 17
+      action: "post.api.adesao.:id.plano"
+      http_status: 201
+
+  # ========== FRONTEND: navega selecao-parcelamento ==========
+  - n: 19
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/selecao-parcelamento"
+      waitUntil: networkidle
+
+  - n: 20
+    action: screenshot
+
+  # ========== STEP 6 — DEFINIR PARCELAMENTO ==========
+  - n: 21
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/parcelamento"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        numeroParcelas: 12
+        diaVencimento: 10
+        dataPrimeiraParcela: "2026-06-10"
+    expect: { status: 201 }
+    extract:
+      VALOR_PARCELA: "$.valorParcela"
+      VALOR_TOTAL: "$.valorTotal"
+
+  - n: 22
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 21
+      action: "post.api.adesao.:id.parcelamento"
+      http_status: 201
+
+  # ========== STEP 7 — CONFIRMAR (GERA CONTRATO REAL) ==========
+  - n: 23
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/confirmar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        metodoPagamento: "pix"
+    expect: { status: 201 }
+    extract:
+      CONTRATO_ID: "$.contratoId"
+      NUMERO_CONTRATO: "$.numeroContrato"
+      CONTRATO_STATUS: "$.status"
+
+  - n: 24
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 23
+      action: "post.api.adesao.:id.confirmar"
+      http_status: 201
+
+  # ========== STEP 8 — VERIFICAR ESTADO FINAL ==========
+  - n: 25
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+    extract:
+      FINAL_STEP: "$.contratacao.step"
+      FINAL_CONTRATO_ID: "$.contratacao.contrato_id"
+
+  # ========== FRONTEND: navega meus-contratos pra ver o contrato criado ==========
+  - n: 26
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/meus-contratos"
+      waitUntil: networkidle
+
+  - n: 27
+    action: screenshot
+
+  - n: 28
+    action: eval
+    args:
+      script: |
+        (() => ({
+          url: location.href,
+          title: document.title,
+          bodyText: document.body.innerText.slice(0, 300)
+        }))()
+      as: PAGE_MEUS_CONTRATOS

@@ -1,0 +1,159 @@
+id: setup-user-com-contrato
+description: |
+  Sub-flow: cria um usuário novo via Supabase Auth admin API, completa
+  onboarding programaticamente (user_profiles.onboarding_completed=true)
+  e faz adesão completa (iniciar → turma → plano → parcelamento → confirmar)
+  via API. Resultado: vars USER_EMAIL, USER_ID, USER_JWT, CONTRATO_ID,
+  ADESAO_ID, TURMA_ID, PLANO_ID, LOTE_ID prontos pra outras operações.
+  Não usa UI — propósito é setup rápido (~3s) pra flows de mudanca-plano,
+  rescisao, replanejamento, transferencia.
+vars:
+  - name: USER_EMAIL
+    resolver: mailtm.new
+    args: { bind: "main" }
+  - name: USER_PASSWORD
+    resolver: static
+    args: { value: "FlowHub@2026!" }
+  - name: USER_CPF
+    resolver: fake.cpf
+  - name: USER_PHONE
+    resolver: fake.phone
+  - name: TURMA_CODIGO
+    resolver: static
+    args: { value: "FH-E2E-1777758219774" }
+steps:
+  # 1) cria user no Supabase Auth (service_role)
+  - n: 1
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/auth/v1/admin/users"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+      body:
+        email: "${USER_EMAIL}"
+        password: "${USER_PASSWORD}"
+        email_confirm: true
+        user_metadata:
+          nome: "Flow Hub Tester"
+    expect: { status: 200 }
+    extract:
+      USER_ID: "$.id"
+
+  # 2) upsert user_profiles com onboarding completo
+  - n: 2
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/rest/v1/user_profiles?on_conflict=user_id"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "resolution=merge-duplicates,return=minimal"
+      body:
+        user_id: "${USER_ID}"
+        nome_completo: "Flow Hub Tester"
+        cpf: "${USER_CPF}"
+        telefone: "${USER_PHONE}"
+        data_nascimento: "1995-06-15"
+        genero: "masculino"
+        onboarding_completed: true
+        is_admin: false
+    expect: { status: 201 }
+
+  # 3) login via Supabase Auth → JWT real
+  - n: 3
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/auth/v1/token?grant_type=password"
+      headers:
+        apikey: "${SUPABASE_ANON_KEY}"
+      body:
+        email: "${USER_EMAIL}"
+        password: "${USER_PASSWORD}"
+    expect: { status: 200 }
+    extract:
+      USER_JWT: "$.access_token"
+
+  # 4) iniciar adesão
+  - n: 4
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/iniciar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body: {}
+    expect: { status: 201 }
+    extract:
+      ADESAO_ID: "$.contratacaoId"
+
+  # 5) selecionar turma
+  - n: 5
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/turma"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        codigoTurma: "${TURMA_CODIGO}"
+    expect: { status: 201 }
+    extract:
+      TURMA_ID: "$.turmaId"
+
+  # 6) listar planos da turma
+  - n: 6
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/planos"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+    extract:
+      PLANO_ID: "$.planos[0].id"
+      LOTE_ID: "$.planos[0].loteAtivo.id"
+
+  # 7) selecionar plano
+  - n: 7
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/plano"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        planoId: "${PLANO_ID}"
+    expect: { status: 201 }
+
+  # 8) parcelamento
+  - n: 8
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/parcelamento"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        numeroParcelas: 12
+        diaVencimento: 10
+        dataPrimeiraParcela: "2026-06-10"
+    expect: { status: 201 }
+
+  # 9) confirmar (cria contrato + gera parcelas via backend NestJS — F1 fix)
+  - n: 9
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}/confirmar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        metodoPagamento: "pix"
+    expect: { status: 201 }
+    extract:
+      CONTRATO_ID: "$.contratoId"
+      NUMERO_CONTRATO: "$.numeroContrato"

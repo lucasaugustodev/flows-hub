@@ -76,6 +76,26 @@ export async function renderRunDetail(slug, id) {
   const assertions = result.assertions || [];
   const dur = run.finished_at ? Math.round((new Date(run.finished_at) - new Date(run.started_at)) / 1000) + 's' : '—';
 
+  // Fetch http_calls + audit_entries para mostrar inline embaixo de cada step
+  let httpCallsByStep = {};
+  let auditEntriesByStep = {};
+  try {
+    const [hc, ae] = await Promise.all([
+      api('/api/runs/' + encodeURIComponent(id) + '/http-calls', {}, { project: slug }).catch(() => ({ calls: [] })),
+      api('/api/runs/' + encodeURIComponent(id) + '/audit-entries', {}, { project: slug }).catch(() => ({ entries: [] })),
+    ]);
+    for (const c of (hc.calls || [])) {
+      const k = String(c.step_n);
+      (httpCallsByStep[k] = httpCallsByStep[k] || []).push(c);
+    }
+    // audit entries são correlacionadas pelo trace_id ":<step_n>" — extrair step_n do trace_id
+    for (const e of (ae.entries || [])) {
+      const m = (e.trace_id || '').match(/:(\d+)$/);
+      const k = m ? m[1] : String(e.step_n);
+      (auditEntriesByStep[k] = auditEntriesByStep[k] || []).push(e);
+    }
+  } catch {}
+
   // Aggregate findings across all steps for the summary pills.
   const allFindings = [];
   for (const s of steps) for (const f of (s.findings || [])) allFindings.push({ ...f, step_n: s.n });
@@ -169,6 +189,39 @@ export async function renderRunDetail(slug, id) {
       </div>
     `;
 
+    // Inline render http_calls + audit_entries deste step
+    const stepKey = String(s.n);
+    const httpCalls = httpCallsByStep[stepKey] || [];
+    const auditEntries = auditEntriesByStep[stepKey] || [];
+
+    const httpHtml = httpCalls.map(c => {
+      const statusClass = c.response_status >= 200 && c.response_status < 300 ? 'ok'
+        : c.response_status >= 400 ? 'fail' : 'warn';
+      return `
+        <div class="step-http-call">
+          <span class="badge http-method">${esc(c.method)}</span>
+          <code class="http-url">${esc(c.url)}</code>
+          <span class="badge status-${statusClass}">${esc(c.response_status ?? '—')}</span>
+          <span class="text-3">${esc(c.latency_ms)}ms</span>
+          ${c.error ? `<span class="text-3" style="color:var(--err)">${esc(c.error)}</span>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    const auditHtml = auditEntries.map(e => {
+      const statusClass = e.status === 'success' ? 'ok' : 'fail';
+      return `
+        <div class="step-audit-entry">
+          <span class="step-audit-label">↳ backend audit</span>
+          <code class="audit-action">${esc(e.action)}</code>
+          <span class="badge status-${statusClass}">${esc(e.http_status)}</span>
+          <span class="badge ${esc(e.status)}">${esc(e.status)}</span>
+          <span class="text-3">${esc(e.latency_ms)}ms</span>
+          ${e.user_id ? `<span class="text-3">user <code>${esc(e.user_id.slice(0, 8))}</code></span>` : ''}
+        </div>
+      `;
+    }).join('');
+
     return `
       <div class="step-card ${!s.ok ? 'fail' : ''} ${sevClass}"
            data-step-sevs="${esc(sevs)}"
@@ -180,6 +233,8 @@ export async function renderRunDetail(slug, id) {
         </div>
         ${meta}
         ${err}
+        ${httpHtml}
+        ${auditHtml}
         ${findingsHtml}
         ${shot}
       </div>

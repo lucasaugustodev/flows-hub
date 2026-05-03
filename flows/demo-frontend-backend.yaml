@@ -1,0 +1,81 @@
+id: demo-frontend-backend
+description: |
+  Demo completa: navega o portal-v2 (browser actions),
+  faz screenshot, bate na API backend e valida audit_log.
+  Mostra rastreabilidade total UI ↔ HTTP ↔ audit.
+vars:
+  # PORTAL_BASE, API_BASE, ADMIN_USER_ID já vêm de project_vars
+  - name: ADMIN_JWT
+    resolver: jwt.sign_admin
+    args: { user_id: "${ADMIN_USER_ID}" }
+steps:
+  # === FRONTEND NAVIGATION ===
+  - n: 1
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 2
+    action: screenshot
+
+  - n: 3
+    action: eval
+    args:
+      script: '({ url: location.href, title: document.title, h1: document.querySelector("h1, h2")?.innerText || null })'
+      as: PAGE_INFO_LOGIN
+
+  # === BACKEND CALL #1 (com audit) ===
+  - n: 4
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/onboarding/status"
+      headers:
+        Authorization: "Bearer ${ADMIN_JWT}"
+    expect: { status: 200 }
+    extract:
+      ONB_COMPLETED: "$.onboarding_completed"
+      ONB_IS_ADMIN: "$.is_admin"
+
+  - n: 5
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 4
+      action: "get.api.onboarding.status"
+      http_status: 200
+
+  # === FRONTEND NAVIGATION #2 ===
+  - n: 6
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/dashboard"
+      waitUntil: domcontentloaded
+
+  - n: 7
+    action: screenshot
+
+  - n: 8
+    action: eval
+    args:
+      script: '({ url: location.href, hasNav: !!document.querySelector("nav, [role=navigation]") })'
+      as: DASHBOARD_INFO
+
+  # === BACKEND CALL #2 (com audit) ===
+  - n: 9
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/admin/turmas?limit=2"
+      headers:
+        Authorization: "Bearer ${ADMIN_JWT}"
+    expect: { status: 200 }
+    extract:
+      TOTAL_TURMAS: "$.total"
+
+  - n: 10
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 9
+      action: "get.api.admin.turmas"
+      http_status: 200

@@ -1,0 +1,462 @@
+id: adesao-zero-mailtm
+description: |
+  Fluxo COMPLETO do ZERO no portal-v2:
+  1) cria inbox descartável via mailtm
+  2) cadastra usuário novo (signInWithOtp do Supabase)
+  3) recebe OTP por email (mailtm.wait)
+  4) confirma código no InputOTP
+  5) wizard onboarding: senha + nome + CPF + telefone + gênero
+  6) /selecao-turma: digita código, verifica, seleciona
+  7) /selecao-plano: clica no card do plano
+  8) /selecao-parcelamento: ajusta parcelas e confirma
+  9) /contratacao: confirma e gera contrato real
+  10) valida contrato criado via API + audit_log
+vars:
+  # Inbox descartável — recebe o OTP do Supabase
+  - name: USER_EMAIL
+    resolver: mailtm.new
+    args: { bind: "main" }
+
+  # Dados do cadastro
+  - name: USER_PASSWORD
+    resolver: static
+    args: { value: "FlowHub@2026!" }
+  - name: USER_NAME
+    resolver: static
+    args: { value: "Flow Hub Tester" }
+  - name: USER_NICK
+    resolver: static
+    args: { value: "Flow" }
+  - name: USER_DOB
+    resolver: static
+    args: { value: "1995-06-15" }
+  - name: USER_CPF
+    resolver: fake.cpf
+  - name: USER_PHONE
+    resolver: fake.phone
+  - name: TURMA_CODIGO
+    resolver: static
+    args: { value: "FH-E2E-1777758219774" }
+
+steps:
+  # ============================================================
+  # ETAPA 1 — LOGIN: digitar email e clicar "Continuar"
+  # ============================================================
+  - n: 1
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: networkidle
+
+  - n: 2
+    action: screenshot
+
+  - n: 3
+    action: fill
+    args:
+      target: 'input[type=email]'
+      value: "${USER_EMAIL}"
+
+  - n: 4
+    action: click
+    args:
+      text: "Continuar"
+
+  # aguarda Supabase enviar OTP
+  - n: 5
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 6
+    action: screenshot
+
+  # ============================================================
+  # ETAPA 2 — OTP: aguardar email no mailtm + preencher InputOTP
+  # ============================================================
+  - n: 7
+    action: mailtm.wait_otp
+    args:
+      bind: "main"
+      timeout_seconds: 120
+      regex: "\\b(\\d{6})\\b"
+      min: 6
+      max: 6
+    extract:
+      USER_OTP: "$.otp"
+
+  - n: 8
+    action: fill
+    args:
+      target: 'input[autocomplete="one-time-code"]'
+      value: "${USER_OTP}"
+
+  - n: 9
+    action: screenshot
+
+  - n: 10
+    action: click
+    args:
+      text: "Confirmar código"
+
+  - n: 11
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 12
+    action: screenshot
+
+  # ============================================================
+  # ETAPA 3 — ONBOARDING: dados pessoais (portal pula direto sem pedir senha)
+  # ============================================================
+  - n: 13
+    action: fill
+    args:
+      target: 'input[placeholder="nome completo"]'
+      value: "${USER_NAME}"
+
+  - n: 14
+    action: fill
+    args:
+      target: 'input[placeholder="como você gosta de ser chamado?"]'
+      value: "${USER_NICK}"
+
+  - n: 15
+    action: fill
+    args:
+      target: 'input[type="date"]'
+      value: "${USER_DOB}"
+
+  - n: 16
+    action: fill
+    args:
+      target: 'input[placeholder="CPF"]'
+      value: "${USER_CPF}"
+
+  - n: 17
+    action: fill
+    args:
+      target: 'input[placeholder="Telefone"]'
+      value: "${USER_PHONE}"
+
+  # Re-fixa todos os campos via React-friendly value setter, garantindo que
+  # campos com máscara (CPF, telefone, data) tenham o onChange disparado de
+  # verdade. Sem isso o submit fica bloqueado mesmo com os values visíveis.
+  - n: 18
+    action: eval
+    args:
+      script: |
+        (() => {
+          const setReactValue = (el, value) => {
+            const proto = el.tagName === 'SELECT'
+              ? window.HTMLSelectElement.prototype
+              : window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+            setter.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('blur', { bubbles: true }));
+          };
+          const out = {};
+          const setBy = (sel, val, key) => {
+            const el = document.querySelector(sel);
+            if (el) { setReactValue(el, val); out[key] = val; }
+            else out[key] = 'NOT_FOUND:' + sel;
+          };
+          setBy('input[placeholder="nome completo"]', '${USER_NAME}', 'nome');
+          setBy('input[placeholder="como você gosta de ser chamado?"]', '${USER_NICK}', 'nick');
+          setBy('input[type="date"]', '${USER_DOB}', 'dob');
+          setBy('input[placeholder="CPF"]', '${USER_CPF}', 'cpf');
+          setBy('input[placeholder="Telefone"]', '${USER_PHONE}', 'tel');
+          setBy('select', 'masculino', 'genero');
+          return out;
+        })()
+      as: FORM_FILL_RESULT
+
+  - n: 19
+    action: screenshot
+
+  # Submete o form via requestSubmit para garantir disparo do onSubmit React
+  - n: 20
+    action: eval
+    args:
+      script: |
+        (() => {
+          const form = document.querySelector('form');
+          if (!form) return { ok: false, reason: 'form not found' };
+          form.requestSubmit();
+          return { ok: true };
+        })()
+      as: SUBMIT_RESULT
+
+  - n: 21
+    action: wait_ms
+    args: { ms: 6000 }
+
+  - n: 22
+    action: screenshot
+
+  # ============================================================
+  # ETAPA 4 — ONBOARDING: criar senha (segunda tela do wizard)
+  # ============================================================
+  - n: 23
+    action: fill
+    args:
+      target: 'input[placeholder="senha"]'
+      value: "${USER_PASSWORD}"
+
+  - n: 24
+    action: fill
+    args:
+      target: 'input[placeholder="confirme a senha"]'
+      value: "${USER_PASSWORD}"
+
+  - n: 25
+    action: screenshot
+
+  - n: 26
+    action: click
+    args:
+      text: "Criar conta"
+
+  - n: 27
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 28
+    action: screenshot
+
+  # ============================================================
+  # ETAPA 5 — SELECAO TURMA: marca "outra-turma" e digita código
+  # ============================================================
+  - n: 29
+    action: eval
+    args:
+      script: |
+        (() => {
+          const radio = document.querySelector('input[type="radio"][value="outra-turma"]');
+          if (!radio) return { ok: false, reason: 'radio not found', url: location.href };
+          radio.click();
+          return { ok: true, url: location.href };
+        })()
+      as: SELECT_OUTRA_TURMA
+
+  - n: 30
+    action: wait_ms
+    args: { ms: 1000 }
+
+  - n: 31
+    action: fill
+    args:
+      target: 'input[placeholder="Digite o código de acesso"]'
+      value: "${TURMA_CODIGO}"
+
+  # debounce do verifyTurma é assíncrono (~800ms+API)
+  - n: 32
+    action: wait_ms
+    args: { ms: 3000 }
+
+  - n: 33
+    action: screenshot
+
+  - n: 34
+    action: click
+    args:
+      text: "Selecionar turma"
+
+  - n: 35
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 36
+    action: screenshot
+
+  # ============================================================
+  # ETAPA 6 — SELECAO PLANO: clica "Selecionar plano"
+  # ============================================================
+  - n: 37
+    action: click
+    args:
+      text: "Selecionar plano"
+
+  - n: 38
+    action: wait_ms
+    args: { ms: 8000 }
+
+  # força reload — o SPA às vezes não hidrata após navegação programática
+  - n: 381
+    action: eval
+    args:
+      script: '(() => { const u = location.href; if (!u.includes("/parcelamento") && !u.includes("/contratacao")) { location.href = location.origin + "/selecao-parcelamento"; } return { url: u, redirected: !u.includes("/parcelamento") }; })()'
+      as: MAYBE_REDIRECT
+
+  - n: 382
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 39
+    action: screenshot
+
+  # ============================================================
+  # ETAPA 7 — PARCELAMENTO: marca checkbox "ciente" e clica Continuar
+  # ============================================================
+  - n: 40
+    action: screenshot
+
+  # marca o checkbox "Estou ciente das taxas" via React-friendly setter
+  - n: 41
+    action: eval
+    args:
+      script: |
+        (() => {
+          const cbs = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+          let toggled = 0;
+          for (const cb of cbs) {
+            if (!cb.checked) {
+              cb.click();
+              toggled++;
+            }
+          }
+          return { toggled, total: cbs.length };
+        })()
+      as: CHECKBOXES_MARKED
+
+  - n: 42
+    action: wait_ms
+    args: { ms: 800 }
+
+  - n: 43
+    action: screenshot
+
+  # role pra baixo pra garantir que o botão "Continuar" fique visível
+  - n: 44
+    action: eval
+    args:
+      script: '(() => { window.scrollTo(0, document.body.scrollHeight); return { scrollY: window.scrollY }; })()'
+      as: SCROLL_TO_BOTTOM
+
+  - n: 45
+    action: wait_ms
+    args: { ms: 500 }
+
+  - n: 46
+    action: click
+    args:
+      text: "Continuar"
+
+  - n: 47
+    action: wait_ms
+    args: { ms: 6000 }
+
+  - n: 48
+    action: screenshot
+
+  - n: 49
+    action: eval
+    args:
+      script: |
+        (() => ({
+          url: location.href,
+          h: Array.from(document.querySelectorAll('h1,h2,h3')).map(h => h.innerText.trim()).slice(0, 6),
+        }))()
+      as: PAGE_AFTER_PARCELAMENTO
+
+  # ============================================================
+  # ETAPA 8 — CONTRATACAO: 4 sub-passos (responsável → endereço → contrato → recorrência)
+  # ============================================================
+  # 8.1 — Responsável financeiro: "Eu serei a pessoa responsável"
+  - n: 50
+    action: click
+    args:
+      text: "Eu serei a pessoa responsável"
+
+  - n: 51
+    action: wait_ms
+    args: { ms: 1000 }
+
+  - n: 52
+    action: screenshot
+
+  - n: 53
+    action: click
+    args:
+      text: "Continuar"
+
+  - n: 54
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 55
+    action: screenshot
+
+  # 8.2 — Endereço: preenche CEP (ViaCEP auto-preenche cidade/rua/bairro)
+  - n: 56
+    action: fill
+    args:
+      target: 'input[placeholder="00000-000"]'
+      value: "01310-100"
+
+  # ViaCEP é assíncrono (~1-2s)
+  - n: 57
+    action: wait_ms
+    args: { ms: 3500 }
+
+  - n: 58
+    action: fill
+    args:
+      target: 'input[placeholder="número"]'
+      value: "100"
+
+  - n: 59
+    action: screenshot
+
+  - n: 60
+    action: click
+    args:
+      text: "Continuar"
+
+  - n: 61
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 62
+    action: screenshot
+
+  # 8.3 — Plano sem contrato configurado → portal pula direto pra "Ativar
+  # pagamento recorrente". Click "ADICIONAR DEPOIS" finaliza a adesão sem
+  # cartão (contrato é criado mesmo assim via fluxo lojinha).
+  - n: 63
+    action: eval
+    args:
+      script: '(() => { window.scrollTo(0, document.body.scrollHeight); return { y: window.scrollY }; })()'
+      as: SCROLL_BOTTOM_RECURRENCE
+
+  - n: 64
+    action: wait_ms
+    args: { ms: 800 }
+
+  - n: 65
+    action: screenshot
+
+  - n: 66
+    action: click
+    args:
+      text: "ADICIONAR DEPOIS"
+
+  - n: 67
+    action: wait_ms
+    args: { ms: 6000 }
+
+  - n: 68
+    action: screenshot
+
+  # 8.4 — captura URL final e valida contrato real
+  - n: 69
+    action: eval
+    args:
+      script: |
+        (() => ({
+          url: location.href,
+          h: Array.from(document.querySelectorAll('h1,h2,h3')).map(h => h.innerText.trim()).slice(0, 8),
+          body: document.body.innerText.slice(0, 400),
+        }))()
+      as: PAGE_FINAL

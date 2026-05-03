@@ -1,0 +1,139 @@
+id: replanejamento-completo
+description: |
+  Ciclo COMPLETO de replanejamento financeiro via UI:
+  1) setup-user-com-contrato (API ~3s) — cria user + contrato ativo
+  2) injeta session no browser → /meus-contratos
+  3) clica "Ações" → "Replanejamento financeiro" no ActionMenu
+  4) aguarda modal carregar dadosContrato
+  5) clica no primeiro dia útil disponível no calendário
+  6) clica "Confirmar Replanejamento Financeiro"
+  7) verifica replanejamento via API + audit_log
+steps:
+  # ── SETUP (programático, ~3s) ─────────────────────────────────
+  - n: 1
+    action: invoke_flow
+    args: { flow: setup-user-com-contrato }
+
+  # ── INJETAR SESSION NO BROWSER ────────────────────────────────
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_INJECTED
+
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/meus-contratos"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 3000 }
+
+  - n: 14
+    action: screenshot
+
+  # ── ABRE ACTIONMENU → REPLANEJAMENTO FINANCEIRO ───────────────
+  - n: 15
+    action: click
+    args:
+      text: "Ações"
+
+  - n: 16
+    action: wait_ms
+    args: { ms: 800 }
+
+  - n: 17
+    action: screenshot
+
+  - n: 18
+    action: click
+    args:
+      text: "Replanejamento financeiro"
+
+  # Aguarda modal carregar dadosContrato (useEffect async)
+  - n: 19
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 20
+    action: screenshot
+
+  # ── SELECIONA PRIMEIRO DIA ÚTIL DISPONÍVEL NO CALENDÁRIO ──────
+  - n: 21
+    action: eval
+    args:
+      script: |
+        (() => {
+          // Botões do calendário são <button type="button"> com texto = número do dia
+          const dayBtns = Array.from(document.querySelectorAll('button[type="button"]'))
+            .filter(b => !b.disabled && /^\s*\d{1,2}\s*$/.test(b.textContent));
+          if (dayBtns.length === 0) return { ok: false, reason: 'no available day found' };
+          dayBtns[0].click();
+          return { ok: true, day: dayBtns[0].textContent.trim() };
+        })()
+      as: DIA_SELECIONADO
+
+  - n: 22
+    action: wait_ms
+    args: { ms: 1000 }
+
+  - n: 23
+    action: screenshot
+
+  # ── CONFIRMAR REPLANEJAMENTO ───────────────────────────────────
+  - n: 24
+    action: click
+    args:
+      text: "Confirmar Replanejamento Financeiro"
+
+  - n: 25
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 26
+    action: screenshot
+
+  # ── VERIFICAÇÃO VIA API ───────────────────────────────────────
+  - n: 27
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/replanejamento/historico?contratoId=${CONTRATO_ID}"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+
+  - n: 28
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 27
+      action: "get.api.replanejamento.historico"
+      http_status: 200

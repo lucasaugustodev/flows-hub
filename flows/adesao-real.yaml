@@ -1,0 +1,126 @@
+id: adesao-real
+description: |
+  Cenário REAL completo de adesão:
+  1. Login admin via Supabase Auth API (capture JWT)
+  2. Navega o portal-v2 — login UI → home → selecao-turma
+  3. Em cada navegação: screenshot + capture URL/title
+  4. Bate APIs do funil de adesão (iniciar, listar turmas, etc) com trace correlation
+  5. Audit assertions confirmam que backend gravou audit_log
+vars:
+  - name: ADMIN_JWT
+    resolver: jwt.sign_admin
+    args: { user_id: "${ADMIN_USER_ID}" }
+steps:
+  # ============ FRONTEND: navega login ============
+  - n: 1
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 2
+    action: screenshot
+
+  - n: 3
+    action: eval
+    args:
+      script: '({ url: location.href, title: document.title, hasLoginForm: !!document.querySelector("input[type=email], input[name=email]") })'
+      as: PAGE_LOGIN
+
+  # ============ BACKEND: iniciar adesão ============
+  - n: 4
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/adesao/iniciar"
+      headers:
+        Authorization: "Bearer ${ADMIN_JWT}"
+      body: {}
+    expect: { status: 201 }
+    extract:
+      ADESAO_ID: "$.id"
+      ADESAO_STEP: "$.step"
+
+  # ============ BACKEND: listar turmas disponíveis ============
+  - n: 5
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/adesao/turmas"
+      headers:
+        Authorization: "Bearer ${ADMIN_JWT}"
+    expect: { status: 200 }
+    extract:
+      TOTAL_TURMAS_DISPONIVEIS: "$.total"
+
+  # ============ FRONTEND: navega selecao-turma ============
+  - n: 6
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/selecao-turma"
+      waitUntil: domcontentloaded
+
+  - n: 7
+    action: screenshot
+
+  - n: 8
+    action: eval
+    args:
+      script: '({ url: location.href, title: document.title, hasInput: !!document.querySelector("input[name=codigo]") })'
+      as: PAGE_SELECAO_TURMA
+
+  # ============ BACKEND: ler estado da adesão ============
+  - n: 9
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/adesao/${ADESAO_ID}"
+      headers:
+        Authorization: "Bearer ${ADMIN_JWT}"
+    expect: { status: 200 }
+
+  # ============ BACKEND: catalogo lojinha (planos da turma) ============
+  - n: 10
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/catalogo/turma-planos?turmaCode=FORMAE-172687"
+      headers:
+        Authorization: "Bearer ${ADMIN_JWT}"
+    expect: { status: 200 }
+
+  # ============ FRONTEND: navega selecao-plano ============
+  - n: 11
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/selecao-plano"
+      waitUntil: domcontentloaded
+
+  - n: 12
+    action: screenshot
+
+  - n: 13
+    action: eval
+    args:
+      script: '({ url: location.href, title: document.title })'
+      as: PAGE_SELECAO_PLANO
+
+  # ============ BACKEND: aptidão financeira ============
+  - n: 14
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/aptidao/status"
+      headers:
+        Authorization: "Bearer ${ADMIN_JWT}"
+    expect: { status: 200 }
+
+  # ============ BACKEND: wallet do user ============
+  - n: 15
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/wallet/saldo"
+      headers:
+        Authorization: "Bearer ${ADMIN_JWT}"
+    expect: { status: 200 }

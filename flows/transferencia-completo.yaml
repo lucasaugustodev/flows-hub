@@ -1,0 +1,141 @@
+id: transferencia-completo
+description: |
+  Fluxo COMPLETO de transferência de contrato: cria 2 users (origem com
+  contrato + destino), origem solicita transferência pra destino,
+  destino aceita. Testa POST /api/transferencia/solicitar e
+  POST /api/transferencia/:id/aceitar.
+vars:
+  - name: USER_DESTINO_EMAIL
+    resolver: mailtm.new
+    args: { bind: "destino" }
+  - name: USER_DESTINO_PASSWORD
+    resolver: static
+    args: { value: "FlowHub@2026!" }
+  - name: USER_DESTINO_CPF
+    resolver: fake.cpf
+  - name: USER_DESTINO_PHONE
+    resolver: fake.phone
+steps:
+  # ============================================================
+  # ETAPA 1 — SETUP USER ORIGEM (com contrato)
+  # ============================================================
+  - n: 1
+    action: invoke_flow
+    args:
+      flow: setup-user-com-contrato
+
+  # ============================================================
+  # ETAPA 2 — CRIA USER DESTINO no Supabase
+  # ============================================================
+  - n: 11
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/auth/v1/admin/users"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+      body:
+        email: "${USER_DESTINO_EMAIL}"
+        password: "${USER_DESTINO_PASSWORD}"
+        email_confirm: true
+        user_metadata:
+          nome: "Flow Hub Destino"
+    expect: { status: 200 }
+    extract:
+      USER_DESTINO_ID: "$.id"
+
+  - n: 12
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/rest/v1/user_profiles?on_conflict=user_id"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "resolution=merge-duplicates,return=minimal"
+      body:
+        user_id: "${USER_DESTINO_ID}"
+        nome_completo: "Flow Hub Destino"
+        cpf: "${USER_DESTINO_CPF}"
+        telefone: "${USER_DESTINO_PHONE}"
+        data_nascimento: "1990-01-01"
+        genero: "feminino"
+        onboarding_completed: true
+    expect: { status: 201 }
+
+  - n: 13
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/auth/v1/token?grant_type=password"
+      headers:
+        apikey: "${SUPABASE_ANON_KEY}"
+      body:
+        email: "${USER_DESTINO_EMAIL}"
+        password: "${USER_DESTINO_PASSWORD}"
+    expect: { status: 200 }
+    extract:
+      USER_DESTINO_JWT: "$.access_token"
+
+  # ============================================================
+  # ETAPA 3 — ORIGEM solicita transferência
+  # ============================================================
+  - n: 14
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/transferencia/solicitar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        contratoId: "${CONTRATO_ID}"
+        toUserEmail: "${USER_DESTINO_EMAIL}"
+    expect: { status: 201 }
+    extract:
+      TRANSFER_ID: "$.transferenciaId"
+
+  - n: 15
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 14
+      action: "post.api.transferencia.solicitar"
+      http_status: 201
+
+  # ============================================================
+  # ETAPA 4 — DESTINO consulta + aceita
+  # ============================================================
+  - n: 16
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/transferencia/pendentes"
+      headers:
+        Authorization: "Bearer ${USER_DESTINO_JWT}"
+    expect: { status: 200 }
+
+  - n: 17
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/transferencia/${TRANSFER_ID}"
+      headers:
+        Authorization: "Bearer ${USER_DESTINO_JWT}"
+    expect: { status: 200 }
+
+  - n: 18
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/transferencia/${TRANSFER_ID}/aceitar"
+      headers:
+        Authorization: "Bearer ${USER_DESTINO_JWT}"
+      body: {}
+    expect: { status: 201 }
+
+  - n: 19
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 18
+      action: "post.api.transferencia.:id.aceitar"
+      http_status: 201

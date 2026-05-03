@@ -1,0 +1,67 @@
+id: wallet-completo
+description: |
+  Fluxo COMPLETO de HubCash/Wallet: cria user, consulta saldo inicial,
+  cria transação de recarga PIX pendente, confirma recarga e valida
+  saldo atualizado. Cobre POST /api/wallet/recarga e
+  POST /api/wallet/recarga/:id/confirmar (F5).
+steps:
+  - n: 1
+    action: invoke_flow
+    args:
+      flow: setup-user-com-contrato
+
+  - n: 11
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/wallet/saldo"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
+
+  - n: 12
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/wallet/recarga"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body:
+        valor: 100
+        metodoPagamento: "pix"
+    expect: { status: 201 }
+    extract:
+      RECARGA_ID: "$.id"
+
+  - n: 13
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 12
+      action: "post.api.wallet.recarga"
+      http_status: 201
+
+  - n: 14
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/wallet/recarga/${RECARGA_ID}/confirmar"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+      body: {}
+    expect: { status: 201 }
+
+  - n: 15
+    action: audit.assert_entry
+    args:
+      correlate_with_step: 14
+      action: "post.api.wallet.recarga.:id.confirmar"
+      http_status: 201
+
+  - n: 16
+    action: http.request
+    args:
+      method: GET
+      url: "${API_BASE}/api/wallet/resumo"
+      headers:
+        Authorization: "Bearer ${USER_JWT}"
+    expect: { status: 200 }
