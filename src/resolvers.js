@@ -127,11 +127,12 @@ const RESOLVERS = {
 
   'jwt.sign_admin': async (args = {}, projectVars) => {
     const { user_id, expires_in = 3600 } = args;
-    const sub = user_id || projectVars?.ADMIN_USER_ID;
+    const vars = projectVars?.vars || projectVars;
+    const sub = user_id || vars?.ADMIN_USER_ID;
     if (!sub) {
       throw new Error('jwt.sign_admin: missing user_id arg or ADMIN_USER_ID project var');
     }
-    const secret = projectVars?.SUPABASE_JWT_SECRET || process.env.SUPABASE_JWT_SECRET;
+    const secret = vars?.SUPABASE_JWT_SECRET || process.env.SUPABASE_JWT_SECRET;
     if (!secret) {
       throw new Error('jwt.sign_admin: missing SUPABASE_JWT_SECRET (project var or env)');
     }
@@ -161,8 +162,9 @@ const RESOLVERS = {
     if (!email || !password) {
       throw new Error('supabase.login: requires email + password');
     }
-    const url = projectVars?.SUPABASE_URL || process.env.SUPABASE_URL;
-    const anon = projectVars?.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    const vars = projectVars?.vars || projectVars;
+    const url = vars?.SUPABASE_URL || process.env.SUPABASE_URL;
+    const anon = vars?.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
     if (!url || !anon) {
       throw new Error('supabase.login: missing SUPABASE_URL or SUPABASE_ANON_KEY (project var ou env)');
     }
@@ -196,6 +198,7 @@ async function resolveAll(varDefs = [], overrides = {}, ctx = { cleanup: [] }) {
     if (v.name in out) continue; // overridden
     const fn = RESOLVERS[v.resolver];
     if (!fn) throw new Error(`unknown resolver: ${v.resolver}`);
+    ctx.vars = out;
     out[v.name] = await fn(v.args || {}, ctx);
   }
   return out;

@@ -46,6 +46,30 @@ test('supabase.login retorna access_token em sucesso', async () => {
   assert.strictEqual(token, 'fake.jwt.token');
 });
 
+test('supabase.login aceita vars dentro do contexto do replay', async () => {
+  const token = await RESOLVERS['supabase.login']({
+    email: 'good@x.com',
+    password: 'pass',
+  }, {
+    vars: {
+      SUPABASE_URL: `http://localhost:${port}`,
+      SUPABASE_ANON_KEY: 'anon-key',
+    },
+  });
+  assert.strictEqual(token, 'fake.jwt.token');
+});
+
+test('jwt.sign_admin aceita ADMIN_USER_ID dentro do contexto do replay', async () => {
+  const token = await RESOLVERS['jwt.sign_admin']({}, {
+    vars: {
+      ADMIN_USER_ID: 'admin-user-id',
+      SUPABASE_JWT_SECRET: 'test-secret',
+    },
+  });
+
+  assert.match(token, /^[^.]+\.[^.]+\.[^.]+$/);
+});
+
 test('supabase.login throw em credenciais inválidas (400)', async () => {
   await assert.rejects(
     RESOLVERS['supabase.login']({

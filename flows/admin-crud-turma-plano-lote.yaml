@@ -8,8 +8,8 @@ vars:
     resolver: jwt.sign_admin
     args: {}
   - name: TS
-    resolver: eval
-    args: { js: "return Date.now();" }
+    resolver: now
+    args: {}
 steps:
   - n: 1
     action: http.request

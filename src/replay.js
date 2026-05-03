@@ -143,6 +143,7 @@ async function runFlow(flowId, env) {
       // Substitute earlier-resolved vars into args so resolvers can chain
       // (e.g. mailtm.bind { email: "${TEST_EMAIL}", password: "${TEST_PASSWORD}" }).
       const args = substitute(def.args || {}, vars);
+      ctx.vars = vars;
       vars[def.name] = await fn(args, ctx);
       emit('var_resolved', { name: def.name, source: def.resolver, value: redact(def.name, vars[def.name]) });
     } catch (e) {
@@ -181,6 +182,7 @@ async function runFlow(flowId, env) {
         if (!fn) throw new Error(`unknown resolver: ${def.resolver}`);
         emit('var_resolving', { name: def.name, resolver: def.resolver });
         const stepArgs = substitute({ ...(def.args || {}), ...(step.args || {}) }, vars);
+        ctx.vars = vars;
         vars[def.name] = await fn(stepArgs, ctx);
         emit('var_resolved', { name: def.name, source: def.resolver, value: redact(def.name, vars[def.name]) });
         stepLog.push({ n: label, action: step.action, ok: true, durationMs: Date.now() - stepStart, var: def.name, value: redact(def.name, vars[def.name]) });

@@ -6,7 +6,7 @@ description: |
   2) inject session → /meus-pagamentos (aba "A pagar")
   3) click "Pagar" na primeira parcela → abre PaymentModal
   4) click "PIX" → handleGerarPix → abre PixModal com QR code
-  5) verifica pix gerado em 'pix_omie' / 'boletos' / wallet via Supabase
+  5) verifica pix gerado em 'pix_gerados' e linkado a parcela via Supabase
   Nota: confirmacao do pagamento (PIX paid) e via webhook em produção;
   aqui validamos que a UI gera o request de pagamento corretamente.
 steps:
@@ -115,19 +115,46 @@ steps:
     action: screenshot
 
   # ── VERIFICAÇÃO via Supabase ──────────────────────────────
-  # PIX gerado deve aparecer em pix_omie ou boletos (depende da implementação)
-  # Pelo menos uma das tabelas deve ter um registro novo pra esse user
+  # PIX gerado deve aparecer em pix_gerados e estar linkado a uma parcela.
   - n: 30
     action: http.request
     args:
       method: GET
-      url: "${SUPABASE_URL}/rest/v1/pix_omie?user_id=eq.${USER_ID}&order=created_at.desc&limit=3&select=id,valor,status,created_at"
+      url: "${SUPABASE_URL}/rest/v1/pix_gerados?user_id=eq.${USER_ID}&order=created_at.desc&limit=3&select=id,c_cod_int_pix,parcela_id,valor,status,created_at"
       headers:
         apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
         Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
     expect: { status: 200 }
 
   - n: 31
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "PIX deve ser criado no backend"
+
+  - n: 32
+    action: http.assert_json
+    args:
+      path: "$[0].id"
+      not_empty: true
+      message: "PIX criado deve ter id"
+
+  - n: 33
+    action: http.assert_json
+    args:
+      path: "$[0].c_cod_int_pix"
+      not_empty: true
+      message: "PIX criado deve ter codigo de integracao"
+
+  - n: 34
+    action: http.assert_json
+    args:
+      path: "$[0].parcela_id"
+      not_empty: true
+      message: "PIX criado deve estar linkado a parcela"
+
+  - n: 35
     action: http.request
     args:
       method: GET
@@ -136,3 +163,10 @@ steps:
         apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
         Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
     expect: { status: 200 }
+
+  - n: 36
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "contrato deve manter parcelas consultaveis apos gerar PIX"
