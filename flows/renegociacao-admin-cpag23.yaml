@@ -198,41 +198,19 @@ steps:
     args: { ms: 1500 }
 
   - n: 18
-    action: eval
+    action: fill
     args:
-      script: |
-        (() => {
-          const setValue = (el, value) => {
-            const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
-            desc.set.call(el, value);
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-          };
-          const input = [...document.querySelectorAll('input')]
-            .find(i => /buscar por cpf|nome|email|numero do contrato/i.test(i.placeholder || ''));
-          if (!input) throw new Error('input de busca de contrato nao encontrado');
-          setValue(input, '${NUMERO_CONTRATO}');
-          input.focus();
-          return { ok: true, numeroContrato: '${NUMERO_CONTRATO}', value: input.value };
-        })()
-      as: BUSCA_CONTRATO_PREENCHIDA
+      target: 'input[placeholder*="Buscar por CPF"]'
+      value: "${NUMERO_CONTRATO}"
 
   - n: 18.5
     action: wait_ms
     args: { ms: 500 }
 
   - n: 18.6
-    action: eval
+    action: click
     args:
-      script: |
-        (() => {
-          const btn = [...document.querySelectorAll('button')]
-            .find(b => (b.textContent || '').trim().toLowerCase() === 'buscar' && !b.disabled);
-          if (!btn) throw new Error('botao Buscar nao encontrado');
-          btn.click();
-          return { ok: true };
-        })()
-      as: BUSCA_CONTRATO_CLICK
+      text: "Buscar"
 
   - n: 19
     action: wait_ms
