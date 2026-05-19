@@ -20,6 +20,62 @@ vars:
     resolver: static
     args: { value: "9ea49ce4-9273-4847-8063-29c6771825c8" }
 steps:
+  - n: 0
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/planos?nome_plano=eq.Plano%20E2E%20Basico"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        financeiro:
+          numeroMaximoParcelas: "12"
+        pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          pix: true
+          boleto: true
+          cartao: true
+          cartaoRecorrente: true
+          cartaoParcelamentoEstendido: false
+        alteracao:
+          upgrade: true
+          downgrade: true
+        transferencia:
+          transferencia: true
+          dataInicioAlteracao: "2026-01-01"
+          dataTerminoAlteracao: "2031-12-31"
+        rescisao:
+          configuracaoRegra: true
+        contrato:
+          modelo: "e2e"
+          arquivos:
+            - id: "1778500832437"
+              url: "https://amylxrskjhqwrlarqfcz.supabase.co/storage/v1/object/public/contratos-planos/1778500831915_gu8zjq.pdf"
+              nome: "TERMO INDIVIDUAL CODIGOS PORTAL HUB - E2E BACKFILL.pdf"
+              tipo: "pdf"
+              tamanho: "190.05 KB"
+          requer_otp: false
+    expect: { status: 204 }
+
+  - n: 0.1
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/turmas?codigo=eq.FH-E2E-1777758219774"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        dados_pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          numeroMaximoParcelas: "12"
+          dataUltimaParcela: "2027-05-10"
+          parcelamentoEstendido: "sem_taxas"
+    expect: { status: 204 }
+
   - n: 1
     action: invoke_flow
     args: { flow: setup-user-com-contrato }
