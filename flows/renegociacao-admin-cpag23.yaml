@@ -108,36 +108,40 @@ steps:
     action: goto
     args:
       url: "${PORTAL_BASE}/admin-login"
-      waitUntil: domcontentloaded
+      waitUntil: networkidle
 
   - n: 11
+    action: fill
+    args:
+      target: 'input[name=email]'
+      value: "${ADMIN_EMAIL}"
+
+  - n: 11.1
+    action: fill
+    args:
+      target: 'input[name=password]'
+      value: "${ADMIN_PASSWORD}"
+
+  - n: 11.2
+    action: click
+    args:
+      text: "Entrar no Sistema"
+
+  - n: 11.3
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 11.4
     action: eval
     args:
       script: |
         (() => {
-          localStorage.clear();
-          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
-            access_token: '${ADMIN_JWT}',
-            refresh_token: 'flows-hub-injected-admin',
-            expires_at: Math.floor(Date.now()/1000) + 3600,
-            expires_in: 3600,
-            token_type: 'bearer',
-            user: {
-              id: '${ADMIN_USER_ID_LOCAL}',
-              aud: 'authenticated',
-              role: 'authenticated',
-              email: '${ADMIN_EMAIL}',
-              email_confirmed_at: new Date().toISOString(),
-              app_metadata: { provider: 'email', providers: ['email'] },
-              user_metadata: {},
-              created_at: new Date().toISOString()
-            }
-          }));
-          localStorage.setItem('isAdmin', 'true');
-          localStorage.setItem('adminEmail', '${ADMIN_EMAIL}');
-          return { ok: true };
+          if (localStorage.getItem('isAdmin') !== 'true') {
+            throw new Error('login admin nao marcou isAdmin=true');
+          }
+          return { ok: true, url: location.href };
         })()
-      as: ADMIN_SESSION_INJECTED
+      as: ADMIN_LOGIN_OK
 
   - n: 12
     action: goto
