@@ -1,0 +1,315 @@
+id: replanejamento-cpag22-taxa-renegociacao
+name: Replanejamento CPAG-2.2 taxa renegociacao vencida
+description: |
+  UI dedicado CPAG-2.2: cria uma taxa_renegociacao vencida antes do
+  replanejamento, confirma o fluxo pela UI e valida que o novo acordo nasce
+  como parcela e item taxa_renegociacao, separado do principal.
+steps:
+  - n: 0
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/planos?nome_plano=eq.Plano%20E2E%20Basico"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        financeiro:
+          numeroMaximoParcelas: "12"
+        pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          pix: true
+          boleto: true
+          cartao: true
+          cartaoRecorrente: true
+          cartaoParcelamentoEstendido: false
+        alteracao:
+          upgrade: true
+          downgrade: true
+        transferencia:
+          transferencia: true
+          dataInicioAlteracao: "2026-01-01"
+          dataTerminoAlteracao: "2031-12-31"
+        rescisao:
+          configuracaoRegra: true
+        contrato:
+          modelo: "e2e"
+          arquivos:
+            - id: "1778500832437"
+              url: "https://amylxrskjhqwrlarqfcz.supabase.co/storage/v1/object/public/contratos-planos/1778500831915_gu8zjq.pdf"
+              nome: "TERMO INDIVIDUAL CODIGOS PORTAL HUB - E2E BACKFILL.pdf"
+              tipo: "pdf"
+              tamanho: "190.05 KB"
+          requer_otp: false
+    expect: { status: 204 }
+
+  - n: 0.1
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/turmas?codigo=eq.FH-E2E-1777758219774"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        dados_pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          numeroMaximoParcelas: "12"
+          dataUltimaParcela: "2027-05-10"
+          parcelamentoEstendido: "sem_taxas"
+    expect: { status: 204 }
+
+  - n: 1
+    action: invoke_flow
+    args: { flow: setup-user-com-contrato }
+
+  - n: 2
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/planos?id=eq.${PLANO_ID}"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        financeiro:
+          numeroMaximoParcelas: "12"
+        pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          cartaoParcelamentoEstendido: false
+    expect: { status: 204 }
+
+  - n: 3
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/rest/v1/parcelas"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        contrato_id: "${CONTRATO_ID}"
+        user_id: "${USER_ID}"
+        numero_parcela: null
+        tipo_parcela: "taxa_renegociacao"
+        tipo: "taxa_renegociacao"
+        valor: 50
+        data_vencimento: "2026-01-10"
+        status: "vencido"
+        observacoes: "Taxa renegociacao vencida criada pelo Pageflows CPAG-2.2"
+        origem_fluxo: "pageflows_setup"
+        origem_tabela: "flows"
+        origem_id: "${CONTRATO_ID}"
+    expect: { status: 201 }
+
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString()
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_INJECTED
+
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/meus-contratos"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 12000 }
+
+  - n: 14
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const btns = [...document.querySelectorAll('button')].filter(b => norm(b.textContent) === 'acoes');
+          if (!btns.length) return { ok: false, reason: 'no acoes button' };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true, found: btns.length };
+        })()
+      as: ACOES_CLICKED
+
+  - n: 15
+    action: wait_ms
+    args: { ms: 800 }
+
+  - n: 16
+    action: click
+    args:
+      text: "Replanejamento financeiro"
+
+  - n: 17
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 18
+    action: eval
+    args:
+      script: |
+        (() => {
+          const dayBtns = Array.from(document.querySelectorAll('button[type="button"]'))
+            .filter(b => !b.disabled && /^\s*\d{1,2}\s*$/.test(b.textContent || ''));
+          if (!dayBtns.length) return { ok: false, reason: 'no available day found' };
+          dayBtns[0].click();
+          return { ok: true, day: dayBtns[0].textContent.trim() };
+        })()
+      as: DIA_SELECIONADO
+
+  - n: 19
+    action: wait_ms
+    args: { ms: 2500 }
+
+  - n: 20
+    action: screenshot
+
+  - n: 21
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /continuar com replanejamento|confirmar replanejamento financeiro/i.test((b.textContent || '').trim()) && !b.disabled);
+          if (!btns.length) return { ok: false, reason: 'no first continue button', buttons: [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).slice(0, 40) };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true, text: btns[0].textContent.trim() };
+        })()
+      as: CONTINUAR_CLICK
+
+  - n: 22
+    action: wait_ms
+    args: { ms: 2000 }
+
+  - n: 23
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /^confirmar$/i.test((b.textContent || '').trim()) && !b.disabled);
+          if (!btns.length) return { ok: false, reason: 'no final confirm button', buttons: [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).slice(0, 40) };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONFIRMAR_FINAL
+
+  - n: 24
+    action: wait_for
+    args:
+      text: "Replanejamento financeiro finalizado com sucesso"
+      timeout: 20000
+
+  - n: 25
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.replanejamento&tipo_parcela=eq.taxa_renegociacao&select=id,valor,numero_parcela&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 26
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "taxa_renegociacao vencida deve gerar nova parcela taxa_renegociacao"
+
+  - n: 27
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas_itens?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.replanejamento&tipo_item=eq.taxa_renegociacao&select=id,valor&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 28
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "taxa_renegociacao deve gerar item taxa_renegociacao"
+
+  - n: 29
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.pageflows_setup&tipo_parcela=eq.taxa_renegociacao&status=eq.cancelado&select=id&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 30
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "taxa_renegociacao vencida antiga deve ser cancelada/substituida"
+
+  - n: 90
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/planos?id=eq.${PLANO_ID}"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        financeiro:
+          numeroMaximoParcelas: "12"
+        pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          pix: true
+          boleto: true
+          cartao: true
+          cartaoRecorrente: true
+          cartaoParcelamentoEstendido: false
+        contrato:
+          modelo: "e2e"
+          arquivos:
+            - id: "1778500832437"
+              url: "https://amylxrskjhqwrlarqfcz.supabase.co/storage/v1/object/public/contratos-planos/1778500831915_gu8zjq.pdf"
+              nome: "TERMO INDIVIDUAL CODIGOS PORTAL HUB - E2E BACKFILL.pdf"
+              tipo: "pdf"
+              tamanho: "190.05 KB"
+          requer_otp: false
+    expect: { status: 204 }

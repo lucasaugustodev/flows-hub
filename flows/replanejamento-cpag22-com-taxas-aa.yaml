@@ -1,0 +1,397 @@
+id: replanejamento-cpag22-com-taxas-aa
+name: Replanejamento CPAG-2.2 COM_TAXAS com AA
+description: |
+  UI dedicado CPAG-2.2: replanejamento com parcelamento estendido COM_TAXAS
+  e arrecadacao alternativa ligada. Valida que a UI confirma o fluxo e que o
+  backend grava parcelas, parcelas_itens, taxa_estendido e AA no modelo novo.
+steps:
+  - n: 0
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/planos?nome_plano=eq.Plano%20E2E%20Basico"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        financeiro:
+          numeroMaximoParcelas: "12"
+        pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          pix: true
+          boleto: true
+          cartao: true
+          cartaoRecorrente: true
+          cartaoParcelamentoEstendido: false
+        alteracao:
+          upgrade: true
+          downgrade: true
+        transferencia:
+          transferencia: true
+          dataInicioAlteracao: "2026-01-01"
+          dataTerminoAlteracao: "2031-12-31"
+        rescisao:
+          configuracaoRegra: true
+        contrato:
+          modelo: "e2e"
+          arquivos:
+            - id: "1778500832437"
+              url: "https://amylxrskjhqwrlarqfcz.supabase.co/storage/v1/object/public/contratos-planos/1778500831915_gu8zjq.pdf"
+              nome: "TERMO INDIVIDUAL CODIGOS PORTAL HUB - E2E BACKFILL.pdf"
+              tipo: "pdf"
+              tamanho: "190.05 KB"
+          requer_otp: false
+    expect: { status: 204 }
+
+  - n: 0.1
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/turmas?codigo=eq.FH-E2E-1777758219774"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        dados_pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          numeroMaximoParcelas: "12"
+          dataUltimaParcela: "2027-05-10"
+          parcelamentoEstendido: "sem_taxas"
+    expect: { status: 204 }
+
+  - n: 1
+    action: invoke_flow
+    args: { flow: setup-user-com-contrato }
+
+  - n: 2
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/planos?id=eq.${PLANO_ID}"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        financeiro:
+          numeroMaximoParcelas: "12"
+          semestres:
+            - nome: "S1"
+              dataVencimento: "2026-08"
+          valorTotalArrecadacao: "100"
+        pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          cartaoParcelamentoEstendido: true
+          numeroParcelasEstendido: "21"
+          parcelamentoEstendido: "com_taxas"
+          taxaAntecipacao: "10"
+          parcelasEstendido:
+            - id: 1
+              percentual: "0"
+              valor: "0"
+    expect: { status: 204 }
+
+  - n: 3
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/turmas?id=eq.${TURMA_ID}"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        dados_pagamento:
+          limiteDiasReorganizacao: 21
+    expect: { status: 204 }
+
+  - n: 4
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/rest/v1/parcelas"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        contrato_id: "${CONTRATO_ID}"
+        user_id: "${USER_ID}"
+        numero_parcela: 99
+        tipo_parcela: "estendido"
+        tipo: "renegociacao"
+        valor: 100
+        data_vencimento: "2026-07-10"
+        status: "pendente"
+        observacoes: "Parcela estendida seed Pageflows CPAG-2.2"
+        origem_fluxo: "pageflows_setup"
+        origem_tabela: "flows"
+        origem_id: "${CONTRATO_ID}"
+        regime_estendido: "com_taxas"
+        parcelas_estendidas_total: 1
+    expect: { status: 201 }
+
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${USER_JWT}',
+            refresh_token: 'flows-hub-injected',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${USER_ID}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${USER_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString()
+            }
+          }));
+          return { ok: true };
+        })()
+      as: SESSION_INJECTED
+
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/meus-contratos"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 12000 }
+
+  - n: 14
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const btns = [...document.querySelectorAll('button')].filter(b => norm(b.textContent) === 'acoes');
+          if (!btns.length) return { ok: false, reason: 'no acoes button' };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true, found: btns.length };
+        })()
+      as: ACOES_CLICKED
+
+  - n: 15
+    action: wait_ms
+    args: { ms: 800 }
+
+  - n: 16
+    action: click
+    args:
+      text: "Replanejamento financeiro"
+
+  - n: 17
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 18
+    action: eval
+    args:
+      script: |
+        (() => {
+          const dayBtns = Array.from(document.querySelectorAll('button[type="button"]'))
+            .filter(b => !b.disabled && /^\s*\d{1,2}\s*$/.test(b.textContent || ''));
+          if (!dayBtns.length) return { ok: false, reason: 'no available day found' };
+          dayBtns[0].click();
+          return { ok: true, day: dayBtns[0].textContent.trim() };
+        })()
+      as: DIA_SELECIONADO
+
+  - n: 19
+    action: wait_ms
+    args: { ms: 1000 }
+
+  - n: 20
+    action: eval
+    args:
+      script: |
+        (() => {
+          const setSlider = (slider, target) => {
+            if (!slider) return { ok: false, reason: 'missing slider' };
+            slider.focus();
+            const min = Number(slider.getAttribute('aria-valuemin') || 0);
+            const max = Number(slider.getAttribute('aria-valuemax') || target);
+            target = Math.max(min, Math.min(max, Number(target)));
+            for (let i = 0; i < 80; i++) {
+              const current = Number(slider.getAttribute('aria-valuenow') || 0);
+              if (current === target) break;
+              const key = target > current ? 'ArrowRight' : 'ArrowLeft';
+              slider.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+            }
+            return { ok: Number(slider.getAttribute('aria-valuenow')) === target, target, final: Number(slider.getAttribute('aria-valuenow') || 0) };
+          };
+          const sliders = Array.from(document.querySelectorAll('[role="slider"]'));
+          const normalMax = Number(sliders[0]?.getAttribute('aria-valuemax') || 12);
+          const normal = setSlider(sliders[0], normalMax);
+          const estendido = setSlider(sliders[1], 1);
+          return { ok: !!sliders[1] && estendido.ok, normal, estendido, count: sliders.length };
+        })()
+      as: ESTENDIDO_CONFIGURADO
+
+  - n: 21
+    action: wait_ms
+    args: { ms: 1000 }
+
+  - n: 22
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+          const title = [...document.querySelectorAll('span')]
+            .find(s => norm(s.textContent).trim().startsWith('arrecadacao alternativa'));
+          let row = title;
+          while (row && !(row.querySelector && row.querySelector('label input[type="checkbox"]'))) {
+            row = row.parentElement;
+          }
+          const label = row?.querySelector('label');
+          const input = label?.querySelector('input[type="checkbox"]');
+          if (!input) return { ok: false, reason: 'AA checkbox not found' };
+          if (!input.checked) label.click();
+          return { ok: true, checked: input.checked, text: row?.innerText?.slice(0, 120) || '' };
+        })()
+      as: AA_LIGADA
+
+  - n: 23
+    action: wait_ms
+    args: { ms: 2500 }
+
+  - n: 24
+    action: screenshot
+
+  - n: 25
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /continuar com replanejamento|confirmar replanejamento financeiro/i.test((b.textContent || '').trim()) && !b.disabled);
+          if (!btns.length) return { ok: false, reason: 'no first continue button', buttons: [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).slice(0, 40) };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true, text: btns[0].textContent.trim() };
+        })()
+      as: CONTINUAR_CLICK
+
+  - n: 26
+    action: wait_ms
+    args: { ms: 2000 }
+
+  - n: 27
+    action: eval
+    args:
+      script: |
+        (() => {
+          const btns = [...document.querySelectorAll('button')]
+            .filter(b => /^confirmar$/i.test((b.textContent || '').trim()) && !b.disabled);
+          if (!btns.length) return { ok: false, reason: 'no final confirm button', buttons: [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).slice(0, 40) };
+          btns[0].scrollIntoView({ block: 'center' });
+          btns[0].click();
+          return { ok: true };
+        })()
+      as: CONFIRMAR_FINAL
+
+  - n: 28
+    action: wait_for
+    args:
+      text: "Replanejamento financeiro finalizado com sucesso"
+      timeout: 20000
+
+  - n: 29
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.replanejamento&regime_estendido=eq.com_taxas&select=id&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 30
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "deve gravar parcelas com regime_estendido=com_taxas"
+
+  - n: 31
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas_itens?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.replanejamento&tipo_item=eq.taxa_estendido&select=id,valor&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 32
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "COM_TAXAS deve gravar item taxa_estendido"
+
+  - n: 33
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.replanejamento&tipo_parcela=eq.arrecadacao&select=id&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 34
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "AA ligada deve criar parcela de arrecadacao"
+
+  - n: 90
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/planos?id=eq.${PLANO_ID}"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        financeiro:
+          numeroMaximoParcelas: "12"
+        pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          pix: true
+          boleto: true
+          cartao: true
+          cartaoRecorrente: true
+          cartaoParcelamentoEstendido: false
+        contrato:
+          modelo: "e2e"
+          arquivos:
+            - id: "1778500832437"
+              url: "https://amylxrskjhqwrlarqfcz.supabase.co/storage/v1/object/public/contratos-planos/1778500831915_gu8zjq.pdf"
+              nome: "TERMO INDIVIDUAL CODIGOS PORTAL HUB - E2E BACKFILL.pdf"
+              tipo: "pdf"
+              tamanho: "190.05 KB"
+          requer_otp: false
+    expect: { status: 204 }
