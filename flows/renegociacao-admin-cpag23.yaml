@@ -207,12 +207,12 @@ steps:
           const input = [...document.querySelectorAll('input')]
             .find(i => /buscar por cpf|nome|email|numero do contrato/i.test(i.placeholder || ''));
           if (!input) throw new Error('input de busca de contrato nao encontrado');
-          setValue(input, '${USER_EMAIL}');
+          setValue(input, '${NUMERO_CONTRATO}');
           const btn = [...document.querySelectorAll('button')]
             .find(b => (b.textContent || '').trim().toLowerCase() === 'buscar' && !b.disabled);
           if (!btn) throw new Error('botao Buscar nao encontrado');
           btn.click();
-          return { ok: true, email: '${USER_EMAIL}' };
+          return { ok: true, numeroContrato: '${NUMERO_CONTRATO}' };
         })()
       as: BUSCA_CONTRATO
 
