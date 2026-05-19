@@ -208,13 +208,27 @@ steps:
             .find(i => /buscar por cpf|nome|email|numero do contrato/i.test(i.placeholder || ''));
           if (!input) throw new Error('input de busca de contrato nao encontrado');
           setValue(input, '${NUMERO_CONTRATO}');
+          input.focus();
+          return { ok: true, numeroContrato: '${NUMERO_CONTRATO}', value: input.value };
+        })()
+      as: BUSCA_CONTRATO_PREENCHIDA
+
+  - n: 18.5
+    action: wait_ms
+    args: { ms: 500 }
+
+  - n: 18.6
+    action: eval
+    args:
+      script: |
+        (() => {
           const btn = [...document.querySelectorAll('button')]
             .find(b => (b.textContent || '').trim().toLowerCase() === 'buscar' && !b.disabled);
           if (!btn) throw new Error('botao Buscar nao encontrado');
           btn.click();
-          return { ok: true, numeroContrato: '${NUMERO_CONTRATO}' };
+          return { ok: true };
         })()
-      as: BUSCA_CONTRATO
+      as: BUSCA_CONTRATO_CLICK
 
   - n: 19
     action: wait_ms
