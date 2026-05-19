@@ -344,17 +344,29 @@ steps:
     action: eval
     args:
       script: |
-        (() => {
+        (async () => {
           const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
-          const btn = [...document.querySelectorAll('button')]
-            .find(b => norm(b.textContent).includes('confirmar e salvar') && !b.disabled);
-          if (!btn) {
-            const buttons = [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 80);
-            throw new Error('botao Confirmar e Salvar nao encontrado ou desabilitado. Botoes: ' + JSON.stringify(buttons));
+          let lastState = null;
+          for (let i = 0; i < 40; i += 1) {
+            const btn = [...document.querySelectorAll('button')]
+              .find(b => norm(b.textContent).includes('confirmar e salvar'));
+            lastState = {
+              found: Boolean(btn),
+              disabled: btn ? btn.disabled : null,
+              body: (document.body.innerText || '').slice(0, 1200),
+            };
+            if (btn && !btn.disabled) {
+              btn.scrollIntoView({ block: 'center' });
+              btn.click();
+              return { ok: true, waitedMs: i * 500 };
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
           }
-          btn.scrollIntoView({ block: 'center' });
-          btn.click();
-          return { ok: true };
+          const buttons = [...document.querySelectorAll('button')].map(b => ({
+            text: (b.textContent || '').trim(),
+            disabled: b.disabled,
+          })).filter(b => b.text).slice(0, 80);
+          throw new Error('botao Confirmar e Salvar nao habilitou. Estado: ' + JSON.stringify(lastState) + ' Botoes: ' + JSON.stringify(buttons));
         })()
       as: CONFIRMAR_E_SALVAR
 
