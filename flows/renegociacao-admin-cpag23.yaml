@@ -1,0 +1,384 @@
+id: renegociacao-admin-cpag23
+name: Renegociacao Admin CPAG-2.3
+description: |
+  UI dedicado CPAG-2.3: cria contrato via adesao, injeta uma taxa_renegociacao
+  vencida, executa a renegociacao administrativa pelo Backoffice e valida que
+  o backend gerou parcelas, parcelas_itens, cancelamento rastreavel e auditoria.
+vars:
+  - name: ADMIN_EMAIL
+    resolver: static
+    args: { value: "claude-portal-1777646400@deltajohnsons.com" }
+  - name: ADMIN_PASSWORD
+    resolver: static
+    args: { value: "FlowHub@2026!" }
+  - name: ADMIN_JWT
+    resolver: supabase.login
+    args:
+      email: "claude-portal-1777646400@deltajohnsons.com"
+      password: "FlowHub@2026!"
+  - name: ADMIN_USER_ID_LOCAL
+    resolver: static
+    args: { value: "9ea49ce4-9273-4847-8063-29c6771825c8" }
+steps:
+  - n: 1
+    action: invoke_flow
+    args: { flow: setup-user-com-contrato }
+
+  - n: 2
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/rest/v1/parcelas"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        contrato_id: "${CONTRATO_ID}"
+        user_id: "${USER_ID}"
+        numero_parcela: null
+        tipo_parcela: "taxa_renegociacao"
+        tipo: "taxa_renegociacao"
+        valor: 50
+        data_vencimento: "2026-01-10"
+        status: "vencido"
+        observacoes: "Taxa renegociacao vencida criada pelo Pageflows CPAG-2.3"
+        origem_fluxo: "pageflows_setup_admin"
+        origem_tabela: "flows"
+        origem_id: "${CONTRATO_ID}"
+    expect: { status: 201 }
+
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/admin-login"
+      waitUntil: domcontentloaded
+
+  - n: 11
+    action: eval
+    args:
+      script: |
+        (() => {
+          localStorage.clear();
+          localStorage.setItem('sb-amylxrskjhqwrlarqfcz-auth-token', JSON.stringify({
+            access_token: '${ADMIN_JWT}',
+            refresh_token: 'flows-hub-injected-admin',
+            expires_at: Math.floor(Date.now()/1000) + 3600,
+            expires_in: 3600,
+            token_type: 'bearer',
+            user: {
+              id: '${ADMIN_USER_ID_LOCAL}',
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: '${ADMIN_EMAIL}',
+              email_confirmed_at: new Date().toISOString(),
+              app_metadata: { provider: 'email', providers: ['email'] },
+              user_metadata: {},
+              created_at: new Date().toISOString()
+            }
+          }));
+          localStorage.setItem('isAdmin', 'true');
+          localStorage.setItem('adminEmail', '${ADMIN_EMAIL}');
+          return { ok: true };
+        })()
+      as: ADMIN_SESSION_INJECTED
+
+  - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/backoffice/gestao"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 14
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => norm(b.textContent).includes('renegociacoes'));
+          if (!btn) {
+            const buttons = [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 50);
+            throw new Error('aba Renegociacoes nao encontrada. Botoes: ' + JSON.stringify(buttons));
+          }
+          btn.scrollIntoView({ block: 'center' });
+          btn.click();
+          return { ok: true, text: btn.textContent.trim() };
+        })()
+      as: TAB_RENEGOCIACOES
+
+  - n: 15
+    action: wait_ms
+    args: { ms: 1500 }
+
+  - n: 16
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => norm(b.textContent).includes('nova renegociacao') && !b.disabled);
+          if (!btn) {
+            const buttons = [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 50);
+            throw new Error('botao Nova Renegociacao nao encontrado. Botoes: ' + JSON.stringify(buttons));
+          }
+          btn.scrollIntoView({ block: 'center' });
+          btn.click();
+          return { ok: true };
+        })()
+      as: NOVA_RENEGOCIACAO
+
+  - n: 17
+    action: wait_ms
+    args: { ms: 1500 }
+
+  - n: 18
+    action: eval
+    args:
+      script: |
+        (() => {
+          const setValue = (el, value) => {
+            const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+            desc.set.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+          const input = [...document.querySelectorAll('input')]
+            .find(i => /buscar por cpf|nome|email|numero do contrato/i.test(i.placeholder || ''));
+          if (!input) throw new Error('input de busca de contrato nao encontrado');
+          setValue(input, '${USER_EMAIL}');
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => (b.textContent || '').trim().toLowerCase() === 'buscar' && !b.disabled);
+          if (!btn) throw new Error('botao Buscar nao encontrado');
+          btn.click();
+          return { ok: true, email: '${USER_EMAIL}' };
+        })()
+      as: BUSCA_CONTRATO
+
+  - n: 19
+    action: wait_ms
+    args: { ms: 3500 }
+
+  - n: 20
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const dialog = document.querySelector('[role="dialog"]') || document.body;
+          const candidates = [...dialog.querySelectorAll('button')]
+            .filter(b => (b.textContent || '').includes('#') && !norm(b.textContent).includes('buscar') && !b.disabled);
+          if (!candidates.length) {
+            const buttons = [...dialog.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 80);
+            throw new Error('resultado de contrato nao encontrado. Botoes: ' + JSON.stringify(buttons));
+          }
+          candidates[0].scrollIntoView({ block: 'center' });
+          candidates[0].click();
+          return { ok: true, selected: candidates[0].textContent.trim() };
+        })()
+      as: CONTRATO_SELECIONADO
+
+  - n: 21
+    action: wait_ms
+    args: { ms: 6000 }
+
+  - n: 22
+    action: eval
+    args:
+      script: |
+        (() => {
+          const body = document.body.innerText || '';
+          if (!/principal pendente/i.test(body) || !/acordo de renegocia/i.test(body)) {
+            throw new Error('preview backend nao visivel. Texto: ' + body.slice(0, 1000));
+          }
+          return { ok: true };
+        })()
+      as: PREVIEW_BACKEND_VISIVEL
+
+  - n: 23
+    action: screenshot
+
+  - n: 24
+    action: eval
+    args:
+      script: |
+        (() => {
+          const setValue = (el, value) => {
+            const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+            desc.set.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+          const labels = [...document.querySelectorAll('label')];
+          const label = labels.find(l => /taxa\s*\(juros\/multa\)/i.test(l.textContent || ''));
+          const input = label?.parentElement?.querySelector('input[inputmode="decimal"]')
+            || [...document.querySelectorAll('input[inputmode="decimal"]')][0];
+          if (!input) throw new Error('input Taxa (Juros/Multa) nao encontrado');
+          const before = input.value;
+          setValue(input, '10,00');
+          return { ok: true, before, after: input.value };
+        })()
+      as: TAXA_RENEGOCIACAO_EDITADA
+
+  - n: 25
+    action: wait_ms
+    args: { ms: 2500 }
+
+  - n: 26
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => norm(b.textContent).includes('confirmar direto') && !b.disabled);
+          if (!btn) {
+            const buttons = [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 80);
+            throw new Error('botao Confirmar Direto nao encontrado ou desabilitado. Botoes: ' + JSON.stringify(buttons));
+          }
+          btn.scrollIntoView({ block: 'center' });
+          btn.click();
+          return { ok: true };
+        })()
+      as: CONFIRMAR_DIRETO
+
+  - n: 27
+    action: wait_ms
+    args: { ms: 1500 }
+
+  - n: 28
+    action: eval
+    args:
+      script: |
+        (() => {
+          const setValue = (el, value) => {
+            const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+            desc.set.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+          const textarea = document.querySelector('textarea');
+          if (!textarea) throw new Error('textarea de observacoes nao encontrado');
+          setValue(textarea, 'Pageflows CPAG-2.3 reducao parcial de acordo');
+          return { ok: true };
+        })()
+      as: OBSERVACOES_PREENCHIDAS
+
+  - n: 29
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => norm(b.textContent).includes('confirmar e salvar') && !b.disabled);
+          if (!btn) {
+            const buttons = [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 80);
+            throw new Error('botao Confirmar e Salvar nao encontrado ou desabilitado. Botoes: ' + JSON.stringify(buttons));
+          }
+          btn.scrollIntoView({ block: 'center' });
+          btn.click();
+          return { ok: true };
+        })()
+      as: CONFIRMAR_E_SALVAR
+
+  - n: 30
+    action: wait_for
+    args:
+      text: "Renegociação salva com sucesso"
+      timeout: 30000
+
+  - n: 31
+    action: screenshot
+
+  - n: 40
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/renegociacoes?contrato_id=eq.${CONTRATO_ID}&tipo_criacao=eq.admin&select=id,user_id,admin_id,tipo_criacao&order=created_at.desc&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+    extract:
+      RENEGOCIACAO_ID: "$.[0].id"
+
+  - n: 41
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "renegociacao admin deve registrar renegociacoes com tipo_criacao=admin"
+
+  - n: 42
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.renegociacao_admin&select=id,tipo_parcela,origem_id&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 43
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "renegociacao admin deve criar parcelas com origem_fluxo=renegociacao_admin"
+
+  - n: 44
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.pageflows_setup_admin&tipo_parcela=eq.taxa_renegociacao&status=eq.cancelado&motivo_cancelamento=eq.substituida_por_renegociacao_admin&select=id&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 45
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "taxa_renegociacao antiga deve ser cancelada com motivo de renegociacao admin"
+
+  - n: 46
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas_itens?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.renegociacao_admin&tipo_item=eq.taxa_renegociacao&valor_abatimento_admin=gt.0&select=id,valor,valor_original,valor_abatimento_admin,responsavel_abatimento_id&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 47
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "override admin menor que acordo deve gerar item taxa_renegociacao com abatimento auditado"
+
+  - n: 48
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/renegociacoes_audit?renegociacao_id=eq.${RENEGOCIACAO_ID}&acao=eq.aplicar_admin&select=id,acao,user_id&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 49
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "renegociacao admin deve gravar auditoria aplicar_admin"

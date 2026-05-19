@@ -66,6 +66,7 @@ jobs:
 
             npm ci --omit=dev
             npx playwright install chromium --with-deps || true
+            PROJECT_ID=hub-v2 node scripts/seed-flows.js
 
             if pm2 describe flows-hub > /dev/null 2>&1; then
               pm2 delete flows-hub
