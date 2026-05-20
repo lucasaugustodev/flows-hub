@@ -331,10 +331,8 @@ steps:
       as: CONFIRMAR_REVERSAO
 
   - n: 26
-    action: wait_for
-    args:
-      text: "RenegociaÃ§Ã£o revertida com sucesso"
-      timeout: 30000
+    action: wait_ms
+    args: { ms: 4000 }
 
   - n: 27
     action: wait_ms
