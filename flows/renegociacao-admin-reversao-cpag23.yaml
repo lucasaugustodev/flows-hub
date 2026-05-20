@@ -263,13 +263,20 @@ steps:
     action: eval
     args:
       script: |
-        (() => {
+        (async () => {
           const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
-          const btn = [...document.querySelectorAll('button')]
-            .find(b => norm(b.textContent).includes('reverter renegociacao') && !b.disabled);
+          const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+          let btn = null;
+          for (let i = 0; i < 60; i++) {
+            btn = [...document.querySelectorAll('button')]
+              .find(b => norm(b.textContent).includes('reverter renegociacao') && !b.disabled);
+            if (btn) break;
+            await wait(500);
+          }
           if (!btn) {
             const buttons = [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 80);
-            throw new Error('botao Reverter Renegociacao nao encontrado. Botoes: ' + JSON.stringify(buttons));
+            const body = document.body.innerText || '';
+            throw new Error('botao Reverter Renegociacao nao encontrado apos aguardar. Botoes: ' + JSON.stringify(buttons) + ' Texto: ' + body.slice(0, 1200));
           }
           btn.scrollIntoView({ block: 'center' });
           btn.click();
