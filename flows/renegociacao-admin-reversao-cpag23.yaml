@@ -11,11 +11,120 @@ vars:
   - name: ADMIN_PASSWORD
     resolver: static
     args: { value: "FlowHub@2026!" }
+  - name: ADMIN_JWT
+    resolver: supabase.login
+    args:
+      email: "claude-portal-1777646400@deltajohnsons.com"
+      password: "FlowHub@2026!"
 
 steps:
+  - n: 0
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/planos?nome_plano=eq.Plano%20E2E%20Basico"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        financeiro:
+          numeroMaximoParcelas: "12"
+        pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          pix: true
+          boleto: true
+          cartao: true
+          cartaoRecorrente: true
+          cartaoParcelamentoEstendido: false
+        alteracao:
+          upgrade: true
+          downgrade: true
+        transferencia:
+          transferencia: true
+          dataInicioAlteracao: "2026-01-01"
+          dataTerminoAlteracao: "2031-12-31"
+        rescisao:
+          configuracaoRegra: true
+        contrato:
+          modelo: "e2e"
+          arquivos:
+            - id: "1778500832437"
+              url: "https://amylxrskjhqwrlarqfcz.supabase.co/storage/v1/object/public/contratos-planos/1778500831915_gu8zjq.pdf"
+              nome: "TERMO INDIVIDUAL CODIGOS PORTAL HUB - E2E BACKFILL.pdf"
+              tipo: "pdf"
+              tamanho: "190.05 KB"
+          requer_otp: false
+    expect: { status: 204 }
+
+  - n: 0.1
+    action: http.request
+    args:
+      method: PATCH
+      url: "${SUPABASE_URL}/rest/v1/turmas?codigo=eq.FH-E2E-1777758219774"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        dados_pagamento:
+          guardaFinanceira: "HUB_BELO_HORIZONTE"
+          numeroMaximoParcelas: "12"
+          dataUltimaParcela: "2027-05-10"
+          parcelamentoEstendido: "sem_taxas"
+    expect: { status: 204 }
+
   - n: 1
     action: invoke_flow
-    args: { flow: renegociacao-admin-cpag23 }
+    args: { flow: setup-user-com-contrato }
+
+  - n: 2
+    action: http.request
+    args:
+      method: POST
+      url: "${SUPABASE_URL}/rest/v1/parcelas"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+        Prefer: "return=minimal"
+      body:
+        contrato_id: "${CONTRATO_ID}"
+        user_id: "${USER_ID}"
+        numero_parcela: null
+        tipo_parcela: "taxa_renegociacao"
+        tipo: "taxa_renegociacao"
+        valor: 50
+        data_vencimento: "2026-01-10"
+        status: "vencido"
+        observacoes: "Taxa renegociacao vencida criada pelo Pageflows reversao CPAG-2.3"
+        origem_fluxo: "pageflows_setup_admin_reversao"
+        origem_tabela: "flows"
+        origem_id: "${CONTRATO_ID}"
+    expect: { status: 201 }
+
+  - n: 3
+    action: http.request
+    args:
+      method: POST
+      url: "${API_BASE}/api/admin/replanejamento/aplicar"
+      headers:
+        Authorization: "Bearer ${ADMIN_JWT}"
+      body:
+        contratoId: "${CONTRATO_ID}"
+        configuracao:
+          numeroParcelas: 12
+          diaVencimento: 10
+          dataPrimeiraParcela: "2026-06-10"
+          valorEntrada: 0
+          parcelamentoEstendido: false
+          numeroParcelasEstendidas: 0
+          arrecadacaoAlternativa: false
+          pularAcordoRenegociacao: false
+          motivo: "Pageflows setup para testar reversao administrativa"
+        idempotencyKey: "pageflows-reversao-admin-${CONTRATO_ID}"
+    expect: { status: 201 }
+    extract:
+      RENEGOCIACAO_ID: "$.replanejamentoId"
 
   - n: 10
     action: goto
@@ -238,4 +347,3 @@ steps:
       path: "$"
       minLength: 1
       message: "parcelas novas da renegociacao devem ser canceladas pela reversao"
-
