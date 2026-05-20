@@ -129,14 +129,53 @@ steps:
   - n: 10
     action: goto
     args:
-      url: "${PORTAL_BASE}/backoffice/gestao"
+      url: "${PORTAL_BASE}/admin-login"
       waitUntil: networkidle
 
   - n: 11
+    action: fill
+    args:
+      target: 'input[name=email]'
+      value: "${ADMIN_EMAIL}"
+
+  - n: 11.1
+    action: fill
+    args:
+      target: 'input[name=password]'
+      value: "${ADMIN_PASSWORD}"
+
+  - n: 11.2
+    action: click
+    args:
+      text: "Entrar no Sistema"
+
+  - n: 11.3
     action: wait_ms
-    args: { ms: 4000 }
+    args: { ms: 5000 }
+
+  - n: 11.4
+    action: eval
+    args:
+      script: |
+        (() => {
+          if (localStorage.getItem('isAdmin') !== 'true') {
+            throw new Error('login admin nao marcou isAdmin=true');
+          }
+          return { ok: true, url: location.href };
+        })()
+      as: ADMIN_LOGIN_OK
 
   - n: 12
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/backoffice/gestao"
+      waitUntil: networkidle
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 5000 }
+
+  - n: 14
     action: eval
     args:
       script: |
@@ -154,11 +193,11 @@ steps:
         })()
       as: TAB_RENEGOCIACOES
 
-  - n: 13
+  - n: 15
     action: wait_ms
     args: { ms: 2500 }
 
-  - n: 14
+  - n: 16
     action: eval
     args:
       script: |
@@ -186,11 +225,11 @@ steps:
         })()
       as: BUSCA_RENEGOCIACAO
 
-  - n: 15
+  - n: 17
     action: wait_ms
     args: { ms: 3000 }
 
-  - n: 16
+  - n: 18
     action: eval
     args:
       script: |
@@ -211,16 +250,16 @@ steps:
         })()
       as: ABRIR_REVERSAO
 
-  - n: 17
+  - n: 19
     action: wait_for
     args:
       text: "Detalhes da Renegocia"
       timeout: 30000
 
-  - n: 18
+  - n: 20
     action: screenshot
 
-  - n: 19
+  - n: 21
     action: eval
     args:
       script: |
@@ -238,11 +277,11 @@ steps:
         })()
       as: CLICK_REVERTER
 
-  - n: 20
+  - n: 22
     action: wait_ms
     args: { ms: 800 }
 
-  - n: 21
+  - n: 23
     action: eval
     args:
       script: |
@@ -260,10 +299,10 @@ steps:
         })()
       as: MOTIVO_REVERSAO
 
-  - n: 22
+  - n: 24
     action: screenshot
 
-  - n: 23
+  - n: 25
     action: eval
     args:
       script: |
@@ -284,17 +323,17 @@ steps:
         })()
       as: CONFIRMAR_REVERSAO
 
-  - n: 24
+  - n: 26
     action: wait_for
     args:
       text: "RenegociaÃ§Ã£o revertida com sucesso"
       timeout: 30000
 
-  - n: 25
+  - n: 27
     action: wait_ms
     args: { ms: 2500 }
 
-  - n: 26
+  - n: 28
     action: screenshot
 
   - n: 30
