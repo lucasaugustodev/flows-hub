@@ -1,0 +1,241 @@
+id: renegociacao-admin-reversao-cpag23
+name: Renegociacao Admin Reversao CPAG-2.3
+description: |
+  UI dedicado CPAG-2.3: cria uma renegociacao administrativa pelo flow base,
+  abre a lista de renegociacoes no Backoffice, aciona a reversao pela interface,
+  confirma com motivo obrigatorio e valida auditoria/estado final no banco.
+vars:
+  - name: ADMIN_EMAIL
+    resolver: static
+    args: { value: "claude-portal-1777646400@deltajohnsons.com" }
+  - name: ADMIN_PASSWORD
+    resolver: static
+    args: { value: "FlowHub@2026!" }
+
+steps:
+  - n: 1
+    action: invoke_flow
+    args: { flow: renegociacao-admin-cpag23 }
+
+  - n: 10
+    action: goto
+    args:
+      url: "${PORTAL_BASE}/backoffice/gestao"
+      waitUntil: networkidle
+
+  - n: 11
+    action: wait_ms
+    args: { ms: 4000 }
+
+  - n: 12
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => norm(b.textContent).includes('renegociacoes'));
+          if (!btn) {
+            const buttons = [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 80);
+            throw new Error('aba Renegociacoes nao encontrada. Botoes: ' + JSON.stringify(buttons));
+          }
+          btn.scrollIntoView({ block: 'center' });
+          btn.click();
+          return { ok: true, text: btn.textContent.trim() };
+        })()
+      as: TAB_RENEGOCIACOES
+
+  - n: 13
+    action: wait_ms
+    args: { ms: 2500 }
+
+  - n: 14
+    action: eval
+    args:
+      script: |
+        (() => {
+          const setValue = (el, value) => {
+            const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+            desc.set.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+          const input = [...document.querySelectorAll('input')]
+            .find(i => /buscar por nome do aluno ou cpf/i.test(i.getAttribute('placeholder') || ''));
+          if (!input) {
+            const placeholders = [...document.querySelectorAll('input')].map(i => i.getAttribute('placeholder') || '').filter(Boolean);
+            throw new Error('input de busca de renegociacoes nao encontrado. Placeholders: ' + JSON.stringify(placeholders));
+          }
+          setValue(input, '${USER_CPF}');
+          const form = input.closest('form');
+          const btn = form
+            ? [...form.querySelectorAll('button')].find(b => /buscar/i.test(b.textContent || ''))
+            : null;
+          if (!btn) throw new Error('botao Buscar da lista nao encontrado');
+          btn.click();
+          return { ok: true, busca: input.value };
+        })()
+      as: BUSCA_RENEGOCIACAO
+
+  - n: 15
+    action: wait_ms
+    args: { ms: 3000 }
+
+  - n: 16
+    action: eval
+    args:
+      script: |
+        (() => {
+          const body = document.body.innerText || '';
+          if (!body.includes('${USER_CPF}') && !/Flow Hub Tester/i.test(body)) {
+            throw new Error('renegociacao criada nao apareceu na lista. Texto: ' + body.slice(0, 1200));
+          }
+          const btn = [...document.querySelectorAll('button[title]')]
+            .find(b => /reverter/i.test(b.getAttribute('title') || '') && !b.disabled);
+          if (!btn) {
+            const titles = [...document.querySelectorAll('button[title]')].map(b => b.getAttribute('title')).filter(Boolean);
+            throw new Error('botao de reverter na lista nao encontrado. Titles: ' + JSON.stringify(titles));
+          }
+          btn.scrollIntoView({ block: 'center' });
+          btn.click();
+          return { ok: true, title: btn.getAttribute('title') };
+        })()
+      as: ABRIR_REVERSAO
+
+  - n: 17
+    action: wait_for
+    args:
+      text: "Detalhes da Renegocia"
+      timeout: 30000
+
+  - n: 18
+    action: screenshot
+
+  - n: 19
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => norm(b.textContent).includes('reverter renegociacao') && !b.disabled);
+          if (!btn) {
+            const buttons = [...document.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 80);
+            throw new Error('botao Reverter Renegociacao nao encontrado. Botoes: ' + JSON.stringify(buttons));
+          }
+          btn.scrollIntoView({ block: 'center' });
+          btn.click();
+          return { ok: true };
+        })()
+      as: CLICK_REVERTER
+
+  - n: 20
+    action: wait_ms
+    args: { ms: 800 }
+
+  - n: 21
+    action: eval
+    args:
+      script: |
+        (() => {
+          const setValue = (el, value) => {
+            const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+            desc.set.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+          const textarea = document.querySelector('textarea[placeholder*="motivo"], textarea');
+          if (!textarea) throw new Error('textarea de motivo da reversao nao encontrado');
+          setValue(textarea, 'Reversao Pageflows CPAG-2.3 validando backend e auditoria');
+          return { ok: true, value: textarea.value };
+        })()
+      as: MOTIVO_REVERSAO
+
+  - n: 22
+    action: screenshot
+
+  - n: 23
+    action: eval
+    args:
+      script: |
+        (() => {
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+          const btn = [...document.querySelectorAll('button')]
+            .find(b => norm(b.textContent).includes('confirmar reversao') && !b.disabled);
+          if (!btn) {
+            const buttons = [...document.querySelectorAll('button')].map(b => ({
+              text: (b.textContent || '').trim(),
+              disabled: b.disabled,
+            })).filter(b => b.text).slice(0, 80);
+            throw new Error('botao Confirmar Reversao nao encontrado/habilitado. Botoes: ' + JSON.stringify(buttons));
+          }
+          btn.scrollIntoView({ block: 'center' });
+          btn.click();
+          return { ok: true };
+        })()
+      as: CONFIRMAR_REVERSAO
+
+  - n: 24
+    action: wait_for
+    args:
+      text: "RenegociaÃ§Ã£o revertida com sucesso"
+      timeout: 30000
+
+  - n: 25
+    action: wait_ms
+    args: { ms: 2500 }
+
+  - n: 26
+    action: screenshot
+
+  - n: 30
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/renegociacoes?id=eq.${RENEGOCIACAO_ID}&revertida=eq.true&select=id,revertida,revertida_em"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 31
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "renegociacao admin deve ficar revertida=true apos reversao pela UI"
+
+  - n: 32
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/renegociacoes_audit?renegociacao_id=eq.${RENEGOCIACAO_ID}&acao=eq.reverter_admin&select=id,acao,observacao&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 33
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "reversao admin deve gravar auditoria reverter_admin"
+
+  - n: 34
+    action: http.request
+    args:
+      method: GET
+      url: "${SUPABASE_URL}/rest/v1/parcelas?contrato_id=eq.${CONTRATO_ID}&origem_fluxo=eq.renegociacao_admin&origem_id=eq.${RENEGOCIACAO_ID}&status=eq.cancelado&motivo_cancelamento=eq.revertida_por_renegociacao_admin&select=id&limit=1"
+      headers:
+        apikey: "${SUPABASE_SERVICE_ROLE_KEY}"
+        Authorization: "Bearer ${SUPABASE_SERVICE_ROLE_KEY}"
+    expect: { status: 200 }
+
+  - n: 35
+    action: http.assert_json
+    args:
+      path: "$"
+      minLength: 1
+      message: "parcelas novas da renegociacao devem ser canceladas pela reversao"
+
